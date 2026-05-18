@@ -110,6 +110,12 @@ Recommended order:
 
 Avoid cards described only as `J2A040`, `J2A081`, `Java blank card`, `EMV card`, or `ATM card` unless the seller explicitly confirms Java Card 3.0.4+, the crypto algorithms, enough memory, and install keys. Marketing text about EMV, magnetic stripe, ID cards, or ATM support is irrelevant for this project.
 
+Crypto expectation for J3R150/J3R180/J3R200:
+
+- JCOP4/P71 class public specs and seller listings commonly advertise Java Card 3.0.5 Classic, GlobalPlatform 2.3, SHA-256/SHA-384/SHA-512, ECC GF(p) up to 521 bits, and AES-256.
+- The exact FIDO2 applet needs P-256 key generation, ECDSA SHA-256, ECDH plain/shared secret, SHA-256, and AES-256 CBC no padding.
+- Public evidence says this card family should support the needed algorithms. The seller question is mainly to confirm the exact SKU, that the algorithms are exposed through Java Card APIs on that batch, and that the card is installable with provided keys.
+
 Minimum seller confirmation before buying:
 
 ```text
@@ -120,7 +126,7 @@ Please confirm:
 - Java Card Classic 3.0.4+ / 3.0.5 preferred
 - GlobalPlatform keys / TK / SCP keys are provided
 - Card is not fused/locked and accepts custom CAP install
-- P-256 ECC, ECDSA SHA-256, ECDH, SHA-256, AES-256 are supported
+- This exact batch exposes P-256 ECC, ECDSA SHA-256, ECDH, SHA-256, and AES-256 to Java Card applets
 - User NVM and RAM available after OS
 - Contact ISO7816 T=1 works with PC/SC readers
 ```
@@ -148,6 +154,13 @@ Recommended first order:
 Use Bryan Jacobs' FIDO2Applet as the first passkey base, keep the applet focused on FIDO2 + CTAP2 `hmac-secret`, and keep MuSig2 behind a separate AID. That gives a small audit surface for PRF/auth and leaves Taproot/MuSig2 as an optional second phase.
 
 Candidate cards to ask suppliers about first: JCOP3 J3H145-class or JCOP4 J3R180-class cards with Java Card Classic 3.0.4+, P-256, ECDSA SHA-256, ECDH plain, AES-256-CBC, SHA-256, secure RNG, enough NVM for resident credentials, and documented SCP03/GlobalPlatform access.
+
+Useful card references:
+
+- J3R150 JCOP4 Java Card 3.0.5, AES-256, ECC GF(p) 521, SHA-256 listing: https://www.motechno.com/product/j3r150-dual-interface/
+- J3R180/J3R200 JCOP4/P71 listing with SHA-256 and ECC521: https://www.alibaba.com/product-detail/JCOP4-P71-SeclD-Payment-Contactless-Support_1600188735991.html
+- JCOP4 P71 certificate algorithm list includes ECDSA SHA-256, AES-256 lengths, EC FP 256, SHA-256, and EC DH plain variants: https://sec-certs.org/cc/f29f88756682e034/
+- JCAlgTest J3R180 runtime results include EC FP 256 keypair / ECDSA tests: https://www.fi.muni.cz/~xsvenda/jcalgtest/run_time/NXPJCOP4J3R180SECIDP71.html
 
 ## References
 
