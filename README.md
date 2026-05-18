@@ -87,6 +87,52 @@ npm run card:test
 
 Exact install arguments depend on the card, SCP mode, default keys, and whether the manufacturer pre-personalizes the card. The applet is not a finished production product until it passes `card:install` and `card:test` on the exact card batch.
 
+## Card Shopping Matrix
+
+Prices and availability change quickly. The key requirement is not just the chip name; the card must be **unfused/unlocked** and the seller must provide the **GlobalPlatform/SCP transport keys** so we can install `dist/FIDO2.cap`.
+
+Buy a few different cards and run the same commands against each one:
+
+```bash
+gp -list
+GP_READER="reader name" GP_KEY="seller key" npm run card:install
+npm run card:test
+```
+
+Recommended order:
+
+| Priority | Target | Why | Risk | Example/search |
+| --- | --- | --- | --- | --- |
+| 1 | **J3R180 / JCOP4 / 180K** | Best cheap technical target: newer JCOP4, Java Card 3.0.5, more memory headroom. | Seller must provide keys; some listings are bulk/MOQ. | Alibaba Feitian sample: `https://www.alibaba.com/product-detail/JCOP4-P71-SeclD-Payment-Contactless-Support_1600188735991.html`; search `J3R180 JCOP4 JavaCard 180K unfused`. |
+| 2 | **J3H145 / JCOP3 / 145K** | Already listed by upstream FIDO2Applet as working. Strong first reliable target. | Often more expensive than random eBay/AliExpress stock. | Search `J3H145 JCOP3 JavaCard 145K unlocked`; MoTechno/CardLogix/Smartcard Focus style vendors. |
+| 3 | **J3R150 / JCOP4 / 150K** | Your eBay listing is the right family: “not fused / TK value provided” is a good sign, and 150K may be enough. | Not explicitly in upstream tested list; seller quality varies. Treat as a cheap test card, not the only card. | eBay example from screenshot/text: `https://www.ebay.de/itm/317918355556`; search exact title `J3R150 JCOP Smart Card Dual Interface 150k Speicher not fused TK value provided`. |
+| 4 | **J3H081 / J2D081 / 80K cards** | Cheap experiment only. | Likely too small or missing required algorithms. Do not rely on this for the product path. | Search only if you want a throwaway failure/compatibility data point. |
+
+Avoid cards described only as `J2A040`, `J2A081`, `Java blank card`, `EMV card`, or `ATM card` unless the seller explicitly confirms Java Card 3.0.4+, the crypto algorithms, enough memory, and install keys. Marketing text about EMV, magnetic stripe, ID cards, or ATM support is irrelevant for this project.
+
+Minimum seller confirmation before buying:
+
+```text
+I need unlocked JavaCard samples for loading my own CAP file.
+
+Please confirm:
+- Exact chip: J3R180, J3R150, or J3H145
+- Java Card Classic 3.0.4+ / 3.0.5 preferred
+- GlobalPlatform keys / TK / SCP keys are provided
+- Card is not fused/locked and accepts custom CAP install
+- P-256 ECC, ECDSA SHA-256, ECDH, SHA-256, AES-256 are supported
+- User NVM and RAM available after OS
+- Contact ISO7816 T=1 works with PC/SC readers
+```
+
+Recommended first order:
+
+- 2x **J3R180 JCOP4** samples if you can get them cheap.
+- 1x **J3H145 JCOP3** from a more reliable smartcard vendor.
+- 1x **J3R150 JCOP4 150K** eBay-style card like the screenshot, because it is cheap and may work.
+- 1x **ACS ACR39U/ACR39U-N1** contact PC/SC reader for flashing and CLI tests.
+- Optional: **ACS ACR122U** NFC reader for APDU/NFC experiments, but browser WebAuthn PRF through NFC is not guaranteed.
+
 ## Repo Layout
 
 - `docs/architecture.md`: minimal split-app design.
