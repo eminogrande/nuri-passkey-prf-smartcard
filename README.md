@@ -143,6 +143,7 @@ Recommended first order:
 
 - `docs/architecture.md`: minimal split-app design.
 - `docs/fido2-prf-baseline.md`: FIDO2 PRF baseline and simulator notes.
+- `docs/fido2-card-research.md`: online card research and buying/test matrix.
 - `docs/hardware-manufacturer-spec.md`: card requirements and acceptance tests to send to suppliers.
 - `docs/musig2-card-extension.md`: optional MuSig2 APDU contract.
 - `src/musig2/`: MuSig2 method-level and APDU-level simulators.
