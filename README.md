@@ -1,12 +1,12 @@
 # Nuri Passkey PRF Smartcard
 
-MIT-licensed research package for a small Java Card FIDO2 passkey applet with browser PRF support, plus a separate Taproot/MuSig2 partial-signing simulator.
+MIT-licensed flash-and-test package for a small Java Card FIDO2 passkey applet with browser PRF support, plus a separate Taproot/MuSig2 partial-signing simulator.
 
 The core conclusion is simple: browser passkey PRF is not a separate card-side CTAP extension. Browsers expose WebAuthn `prf`, and authenticators implement CTAP2 `hmac-secret`. A viable smartcard applet should therefore implement and advertise `hmac-secret`, keep normal FIDO2 authentication working, and avoid adding a non-standard CTAP `"prf"` string unless a specific client requires it.
 
 ## What Is In This Repo
 
-- A reproducible harness that clones the public Bryan Jacobs FIDO2Applet baseline and runs Java Card simulator tests.
+- A reproducible build/test flow that clones the public Bryan Jacobs FIDO2Applet baseline and runs Java Card simulator tests.
 - A custom end-to-end PRF mapping test: browser-style PRF salts become CTAP2 `hmac-secret` salts, then a discoverable passkey assertion is verified.
 - A small MuSig2 card simulator compatible with `@scure/btc-signer/musig2.js`.
 - An APDU-level MuSig2 transport simulator with nonce replay rejection.
@@ -65,26 +65,27 @@ Use `Register Passkey`, then `Authenticate + PRF`. A successful PRF-capable auth
 
 Important limitation: a smartcard in a PC/SC reader is not automatically visible to Chrome, Firefox, or Safari as a roaming WebAuthn authenticator. The page works with whatever authenticator the browser exposes, for example platform passkeys, a USB/NFC security key, or this smartcard later if the OS/browser can reach it through NFC or a CTAP bridge.
 
-## Flashing A Real Card Later
+## Flashing A Real Card
 
-The simulator proves the applet behavior before buying cards. For a physical card, use the FIDO2Applet build output and GlobalPlatform tooling:
-
-```bash
-npm run fido2:prepare
-cd vendor/FIDO2Applet-clean
-export JC_HOME="$PWD/sdks/jc305u3_kit"
-./gradlew buildJavaCard
-find build -name '*.cap'
-```
-
-Then install the CAP with your card vendor's GlobalPlatform keys and toolchain. With GlobalPlatformPro this usually looks like:
+This repo includes a prebuilt CAP at `dist/FIDO2.cap`. Rebuild it locally:
 
 ```bash
-gp -list
-gp -install path/to/fido2.cap
+npm run card:build
 ```
 
-Exact install arguments depend on the card, SCP mode, default keys, and whether the manufacturer pre-personalizes the card.
+Install it with the GlobalPlatform key supplied by the card seller:
+
+```bash
+GP_READER="your reader name" GP_KEY="your card key" npm run card:install
+```
+
+Run the real-card hmac-secret/PRF primitive test:
+
+```bash
+npm run card:test
+```
+
+Exact install arguments depend on the card, SCP mode, default keys, and whether the manufacturer pre-personalizes the card. The applet is not a finished production product until it passes `card:install` and `card:test` on the exact card batch.
 
 ## Repo Layout
 

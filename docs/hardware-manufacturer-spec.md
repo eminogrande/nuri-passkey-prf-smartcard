@@ -19,11 +19,11 @@ Secondary, optional work is a separate Taproot/MuSig2 partial-signing applet. Th
 The FIDO2 baseline is the Bryan Jacobs FIDO2Applet lineage:
 
 - Source: `https://github.com/BryanJacobs/FIDO2Applet`
-- Tested ref in this harness: `fb827954cd091a1810163ce51d2f86d42d0b8e20`
+- Tested ref in this package: `fb827954cd091a1810163ce51d2f86d42d0b8e20`
 - Package AID: `A000000647`
 - Applet AID: `A0000006472F0001`
 
-The local harness builds this baseline in jCardSim and runs the CTAP2 hmac-secret tests plus a custom browser PRF mapping test.
+The local test flow builds this baseline in jCardSim and runs the CTAP2 hmac-secret tests plus a custom browser PRF mapping test.
 
 ## Required Card Capabilities
 
@@ -55,9 +55,9 @@ Likely first test cards:
 - NXP JCOP3 J3H145 class: Java Card 3.0.4 Classic, GlobalPlatform 2.2.1, dual interface, P-256/ECDSA class ECC, AES-256, SHA-256, TRNG, around 144 KB EEPROM advertised by suppliers.
 - NXP JCOP4 J3R180 class: Java Card 3.0.5 Classic, GlobalPlatform 2.3, JCOP4, AES-256, SHA-2, ECC over GF(p) up to 521 bits, around 180 KB advertised flash/NVM.
 
-Cheapest cards seen during research:
+Cheapest cards found during current supplier checks:
 
-- J3H145: about EUR 29.99 from MoTechno, with volume discounts; CardLogix listing showed USD 9.78 but out of stock during research.
+- J3H145: about EUR 29.99 from MoTechno, with volume discounts; CardLogix listing showed USD 9.78 but out of stock during checking.
 - J3R180: around USD 14-17 from low-cost online sellers, but provenance and default GlobalPlatform keys must be verified.
 
 For a serious manufacturer quote, prefer a vendor who can provide JCAlgTest output, GlobalPlatform key information, and sample cards with documented SCP settings.

@@ -10,7 +10,10 @@
     "fido2:prepare": "scripts/prepare-fido2-baseline.sh",
     "fido2:test-prf": "scripts/run-fido2-prf-sim-tests.sh",
     "e2e": "scripts/run-all-e2e.sh",
-    "web:prf": "scripts/serve-prf-test.sh"
+    "web:prf": "scripts/serve-prf-test.sh",
+    "card:build": "scripts/build-fido2-cap.sh",
+    "card:install": "scripts/install-fido2-card.sh",
+    "card:test": "scripts/test-real-fido2-card.sh"
   },
   "dependencies": {
     "@noble/curves": "^1.9.7",
