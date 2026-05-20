@@ -85,6 +85,12 @@ Some reader stacks work better by numeric GlobalPlatformPro index:
 GP_READER_INDEX=2 GP_KEY="your card key" npm run card:install
 ```
 
+Cards with separate SCP03 keys can use:
+
+```bash
+GP_READER_INDEX=1 GP_KEY_ENC="..." GP_KEY_MAC="..." GP_KEY_DEK="..." npm run card:install
+```
+
 Run the real-card hmac-secret/PRF primitive test:
 
 ```bash
@@ -196,6 +202,7 @@ Recommended first order:
 - `docs/fido2-prf-baseline.md`: FIDO2 PRF baseline and simulator notes.
 - `docs/fido2-card-research.md`: online card research and buying/test matrix.
 - `docs/hardware-manufacturer-spec.md`: card requirements and acceptance tests to send to suppliers.
+- `docs/real-card-key-handling.md`: non-secret key-handling and IDEX/Feitian sample notes.
 - `docs/musig2-card-extension.md`: optional MuSig2 APDU contract.
 - `src/musig2/`: MuSig2 method-level and APDU-level simulators.
 - `test/`: Node MuSig2 tests and Python FIDO2 PRF mapping test.

@@ -5,3 +5,13 @@ venv/
 *.log
 hs_err_pid*.log
 .DS_Store
+.env
+.env.*
+secrets/
+local-secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+SCP03_KEYS.md
+CARD_KEYS.md
