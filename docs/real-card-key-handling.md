@@ -123,6 +123,13 @@ For Feitian/AliExpress/Alibaba-style Java Cards, ask for:
 
 For the FIDO2-first product, IDEX biometric support should be optional. The minimal PRF/passkey requirement is still CTAP2 `hmac-secret` plus resident credentials. IDEX IBA can later provide on-card user verification, but it increases the build and audit surface because the applet must compile against IDEX shareable-interface exports and call the IBA service AID.
 
+Do not confuse PIN with fingerprint:
+
+- FIDO2 PIN is CTAP `clientPin`; the user sets it and the verifier/retry state is stored on-card.
+- IDEX fingerprint is internal user verification through the IBA applet/service; it is not active in the clean CAP currently installed on the contact sample.
+- Shipping with one preset PIN is not acceptable. A production card should be un-PINned at delivery and guide the user through first-use PIN setup or biometric enrollment.
+- The current CLI test passes without PIN because it requests user verification as `discouraged`, and the clean applet advertises `makeCredUvNotRqd: true`.
+
 Acceptance order:
 
 1. Make the clean FIDO2 applet pass `npm run card:test` on a real card.

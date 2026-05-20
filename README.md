@@ -65,6 +65,20 @@ Use `Register Passkey`, then `Authenticate + PRF`. A successful PRF-capable auth
 
 Important limitation: a smartcard in a PC/SC reader is not automatically visible to Chrome, Firefox, or Safari as a roaming WebAuthn authenticator. The page works with whatever authenticator the browser exposes, for example platform passkeys, a USB/NFC security key, or this smartcard later if the OS/browser can reach it through NFC or a CTAP bridge.
 
+## PIN, Fingerprint, And First Use
+
+Do not ship cards with a shared preset FIDO2 PIN. The intended production state is no FIDO2 PIN set; the first user sets their own PIN through CTAP `clientPin setPin`, and the PIN verifier/retry state lives on the card.
+
+The current clean CAP supports FIDO2 PIN capability but does not integrate the IDEX fingerprint sensor. Current real-card `getInfo` after clean CAP install showed `clientPin: false`, `min_pin_length: 4`, `pin_uv_protocols: [2, 1]`, and `makeCredUvNotRqd: true`.
+
+The real-card CLI PRF test intentionally sets WebAuthn user verification to `discouraged`. That is why it can pass without a PIN:
+
+- FIDO2 authentication and CTAP2 `hmac-secret` PRF can work without PIN when the relying party does not require user verification.
+- A browser or relying party may still require PIN/UV for a discoverable passkey, account policy, or PRF flow.
+- Fingerprint-based UV is a separate integration step: the applet must call the IDEX IBA shareable interface and advertise internal UV only when that path is working.
+
+If a phone loops during first-use PIN setup, that is not a valid product state. It likely means the phone/browser/NFC path is not completing CTAP PIN setup cleanly. For development, set a temporary PIN through the working PC/SC path and retry the phone. For production, either first-use PIN setup over the intended transport must work reliably, or fingerprint UV must be implemented and verified on the IDEX card.
+
 ## Flashing A Real Card
 
 This repo includes a prebuilt CAP at `dist/FIDO2.cap`. Rebuild it locally:
