@@ -17,7 +17,9 @@ if ! command -v "$GP_BIN" >/dev/null 2>&1; then
 fi
 
 GP_ARGS=()
-if [[ -n "${GP_READER:-}" ]]; then
+if [[ -n "${GP_READER_INDEX:-}" ]]; then
+  GP_ARGS+=("-r${GP_READER_INDEX}")
+elif [[ -n "${GP_READER:-}" ]]; then
   GP_ARGS+=("-r" "$GP_READER")
 fi
 if [[ -n "${GP_KEY:-}" ]]; then

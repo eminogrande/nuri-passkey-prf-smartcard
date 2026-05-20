@@ -79,13 +79,64 @@ Install it with the GlobalPlatform key supplied by the card seller:
 GP_READER="your reader name" GP_KEY="your card key" npm run card:install
 ```
 
+Some reader stacks work better by numeric GlobalPlatformPro index:
+
+```bash
+GP_READER_INDEX=2 GP_KEY="your card key" npm run card:install
+```
+
 Run the real-card hmac-secret/PRF primitive test:
 
 ```bash
 npm run card:test
 ```
 
+Reset only the FIDO2 authenticator state on an inserted card:
+
+```bash
+FIDO2_RESET_CONFIRM=YES npm run card:reset
+npm run card:test
+```
+
+Use this reset before reinstalling the applet. It wipes FIDO2 credentials and authenticator state on the card, but does not remove Java Card packages through GlobalPlatform. If reset does not make `card:test` pass, the next step is a GlobalPlatform delete/reinstall of the FIDO2 applet, which is more destructive and should only be done on a test sample.
+
 Exact install arguments depend on the card, SCP mode, default keys, and whether the manufacturer pre-personalizes the card. The applet is not a finished production product until it passes `card:install` and `card:test` on the exact card batch.
+
+### Current Real-Card Reset Notes
+
+Observed on 2026-05-20 with an HID Global OMNIKEY 5422 reader and one inserted sample:
+
+- PC/SC ATR: `3B:80:80:01:01`
+- OpenSC name: `MuscleApplet`
+- FIDO2 smartcard path detected through Python `fido2.pcsc`
+- CTAP versions: `U2F_V2`, `FIDO_2_0`, `FIDO_2_1_PRE`
+- CTAP extensions: `credProtect`, `hmac-secret`
+- CTAP options included `rk: true`, `uv: true`, `clientPin: false`
+- Basic non-resident FIDO2 makeCredential worked
+- Resident/passkey and `hmac-secret` makeCredential returned CTAP `0x27 OPERATION_DENIED`
+- GlobalPlatformPro access worked on reader index `2` with the default development key on this sample
+
+That means the sample is real and alive, but the current installed applet/state is not yet acceptable for the product requirement. The next recovery order is:
+
+```bash
+# non-destructive inventory
+opensc-tool --list-readers
+opensc-tool -r 1 -a
+gp -r2 -i
+gp -r2 -l
+
+# destructive only to FIDO2 authenticator state
+FIDO2_RESET_CONFIRM=YES npm run card:reset
+npm run card:test
+
+# if reset does not fix hmac-secret/rk, reinstall the CAP on a test sample
+GP_READER_INDEX=2 npm run card:install
+npm run card:test
+```
+
+Only do a GlobalPlatform delete/reinstall on a card that is explicitly allowed to be wiped. Keep exactly one test card inserted or on the reader during these commands, and record the physical sample label/photo beside the command output.
+
+If more than one PC/SC FIDO2 card is visible, set `FIDO2_PCSC_INDEX=0`, `1`, etc. The reset script refuses to choose automatically when multiple PC/SC FIDO2 devices are present.
 
 ## Card Shopping Matrix
 
