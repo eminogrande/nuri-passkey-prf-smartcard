@@ -122,6 +122,17 @@ Observed on 2026-05-20 with an HID Global OMNIKEY 5422 reader and one inserted s
 - Resident/passkey and `hmac-secret` makeCredential returned CTAP `0x27 OPERATION_DENIED`
 - GlobalPlatformPro access worked on reader index `2` with the default development key on this sample
 
+After `FIDO2_RESET_CONFIRM=YES npm run card:reset` on the same sample:
+
+- CTAP reset completed successfully.
+- `uv` changed from `true` to `false`.
+- Direct CTAP `makeCredential` works for a basic credential.
+- Direct CTAP `getAssertion` succeeds only when sent with `options: {"up": false}`.
+- Direct CTAP `hmac-secret`/PRF returns two 32-byte outputs only when sent with `options: {"up": false}`.
+- Normal WebAuthn-style auth/PRF with default user presence (`up=true`) still returns CTAP `0x27 OPERATION_DENIED`.
+
+This means the existing installed applet/state is useful for proving the PRF primitive, but it is not acceptable as a browser passkey because browser/WebAuthn clients require user presence. The next product step is replacing the installed FIDO2 package with the clean CAP and rerunning `npm run card:test`.
+
 That means the sample is real and alive, but the current installed applet/state is not yet acceptable for the product requirement. The next recovery order is:
 
 ```bash
