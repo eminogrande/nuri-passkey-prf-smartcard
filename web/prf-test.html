@@ -240,7 +240,7 @@
 
       async function register() {
         if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
-        const { username, salt1, userVerification, residentKey } = getInputs();
+        const { username, userVerification, residentKey } = getInputs();
         const userId = randomBytes(32);
         const publicKey = {
           challenge: randomBytes(32),
@@ -262,14 +262,19 @@
           timeout: 120000,
           attestation: 'none',
           extensions: {
-            prf: { eval: { first: salt1 } },
+            prf: {},
           },
         };
-        print('Registration request', summarizeRequest(publicKey));
+        const capabilities = await getClientCapabilities();
+        print('Registration request', {
+          ...summarizeRequest(publicKey),
+          browserCapabilities: capabilities,
+        });
         const credential = await navigator.credentials.create({
           publicKey,
         });
         const extensionResults = credential.getClientExtensionResults();
+        const authenticatorData = await registrationAuthenticatorData(credential.response);
         const saved = {
           id: credential.id,
           rawId: toBase64Url(credential.rawId),
@@ -282,6 +287,7 @@
           credentialId: credential.id,
           type: credential.type,
           prf: normalizePrf(extensionResults.prf),
+          authenticatorData: authDataSummary(authenticatorData),
           saved,
         });
       }
@@ -300,7 +306,11 @@
             prf: { eval: { first: salt1, second: salt2 } },
           },
         };
-        print('Authentication request', summarizeRequest(publicKey));
+        const capabilities = await getClientCapabilities();
+        print('Authentication request', {
+          ...summarizeRequest(publicKey),
+          browserCapabilities: capabilities,
+        });
         const assertion = await navigator.credentials.get({
           publicKey,
         });
@@ -309,6 +319,7 @@
         print('Authentication + PRF result', {
           credentialId: assertion.id,
           authenticatorDataBytes: assertion.response.authenticatorData.byteLength,
+          authenticatorData: authDataSummary(assertion.response.authenticatorData),
           signatureBytes: assertion.response.signature.byteLength,
           prf: normalizePrf(extensionResults.prf),
         });
@@ -324,6 +335,55 @@
           if (prf.results.second) normalized.results.secondHex = hex(prf.results.second);
         }
         return normalized;
+      }
+
+      async function getClientCapabilities() {
+        if (!window.PublicKeyCredential) return { publicKeyCredential: false };
+        if (typeof PublicKeyCredential.getClientCapabilities !== 'function') {
+          return { publicKeyCredential: true, getClientCapabilities: false };
+        }
+
+        try {
+          return await PublicKeyCredential.getClientCapabilities('public-key');
+        } catch (error) {
+          try {
+            return await PublicKeyCredential.getClientCapabilities();
+          } catch (fallbackError) {
+            return {
+              publicKeyCredential: true,
+              getClientCapabilities: true,
+              error: fallbackError.message || error.message,
+            };
+          }
+        }
+      }
+
+      async function registrationAuthenticatorData(response) {
+        if (typeof response.getAuthenticatorData === 'function') {
+          return response.getAuthenticatorData();
+        }
+        return null;
+      }
+
+      function authDataSummary(buffer) {
+        if (!buffer) return null;
+        const bytes = new Uint8Array(buffer);
+        if (bytes.byteLength < 37) return { byteLength: bytes.byteLength };
+        const flags = bytes[32];
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return {
+          byteLength: bytes.byteLength,
+          flagsHex: `0x${flags.toString(16).padStart(2, '0')}`,
+          flags: {
+            userPresent: Boolean(flags & 0x01),
+            userVerified: Boolean(flags & 0x04),
+            backupEligible: Boolean(flags & 0x08),
+            backupState: Boolean(flags & 0x10),
+            attestedCredentialData: Boolean(flags & 0x40),
+            extensionDataIncluded: Boolean(flags & 0x80),
+          },
+          signCount: view.getUint32(33, false),
+        };
       }
 
       function summarizeRequest(publicKey) {

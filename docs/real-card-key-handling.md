@@ -115,6 +115,16 @@ This separates a normal PRF/passkey failure from a PIN/UV failure. The page logs
 
 The existing `bitcoinlightning` app intentionally uses `residentKey: "required"` and `userVerification: "required"` when creating and restoring the wallet passkey. That is appropriate for a wallet but it forces the browser/platform into a UV path. On the current clean CAP, UV means CTAP client PIN because Feitian fingerprint UV is not integrated yet.
 
+If browser authentication succeeds but the page prints `prf: null`, the browser completed normal WebAuthn but did not return PRF extension output. The diagnostic signal is `authenticatorData.flags.extensionDataIncluded: false` or a 37-byte assertion authenticator-data value. That can happen even when the card supports CTAP2 `hmac-secret`; iOS/iPadOS currently have known limitations passing WebAuthn extension data to external/roaming NFC authenticators.
+
+Clear the local credential and register again after page changes:
+
+```text
+Clear Local Credential -> Register Passkey -> Authenticate + PRF
+```
+
+The page now requests `extensions: { prf: {} }` during registration, then requests concrete PRF outputs during authentication. That is the compatibility path recommended by Yubico's WebAuthn PRF guide.
+
 ## Feitian Fingerprint State
 
 The current clean CAP does not use the Feitian fingerprint sensor. Passing `npm run card:test` only proves FIDO2 auth plus CTAP2 `hmac-secret` PRF through the contact PC/SC path.

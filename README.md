@@ -65,6 +65,8 @@ Use `Register Passkey`, then `Authenticate + PRF`. A successful PRF-capable auth
 
 Important limitation: a smartcard in a PC/SC reader is not automatically visible to Chrome, Firefox, or Safari as a roaming WebAuthn authenticator. The page works with whatever authenticator the browser exposes, for example platform passkeys, a USB/NFC security key, or this smartcard later if the OS/browser can reach it through NFC or a CTAP bridge.
 
+If authentication succeeds but `prf` is `null`, the selected browser/authenticator path did not return WebAuthn PRF extension output. On iOS/iPadOS, external NFC authenticators can authenticate successfully while PRF extension data is not passed through. In that case the card can still pass the repo's PC/SC `hmac-secret` test, but browser PRF over phone NFC is blocked by the platform path.
+
 ## PIN, Feitian Fingerprint, And First Use
 
 Do not ship cards with a shared preset FIDO2 PIN. The intended production state is no FIDO2 PIN set; the first user sets their own PIN through CTAP `clientPin setPin`, and the PIN verifier/retry state lives on the card.
