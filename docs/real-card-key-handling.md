@@ -39,7 +39,9 @@ On 2026-05-20, macOS `system_profiler SPSmartCardsDataType` reported:
 
 That means the IDEX NFC card was not yet close enough or not being polled successfully, even though the reader itself exists.
 
-After CTAP reset on the contact sample, direct CTAP `hmac-secret` works only with `up=false`. Normal user-presence (`up=true`) assertions still fail with CTAP `0x27 OPERATION_DENIED`, so this installed applet is not browser-passkey acceptable without reinstalling/replacing it.
+After CTAP reset on the original preinstalled contact sample, direct CTAP `hmac-secret` worked only with `up=false`. Normal user-presence (`up=true`) assertions still failed with CTAP `0x27 OPERATION_DENIED`.
+
+After deleting package `A0000006472F` and reinstalling this repo's clean `dist/FIDO2.cap`, the contact card passed `npm run card:test` with `REAL_CARD_FIDO2_HMAC_SECRET_OK`. The installed package is now `A000000647` version `0.4` with applet `A0000006472F0001`.
 
 ## Local IDEX Material Already Found
 

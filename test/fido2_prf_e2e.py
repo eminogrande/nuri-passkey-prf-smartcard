@@ -98,7 +98,7 @@ class BrowserPrfMappingE2ETest(CTAPTestCase):
         return out
 
     def test_discoverable_passkey_auth_and_browser_prf_mapping(self):
-        client = self.get_high_level_client(extensions=[HmacSecretExtension(True)])
+        client = self.get_high_level_client(extensions=[HmacSecretExtension])
 
         cred = client.make_credential(
             options=self.get_high_level_make_cred_options(

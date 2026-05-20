@@ -91,6 +91,12 @@ Cards with separate SCP03 keys can use:
 GP_READER_INDEX=1 GP_KEY_ENC="..." GP_KEY_MAC="..." GP_KEY_DEK="..." npm run card:install
 ```
 
+Delete an existing FIDO2 package/app instance and reinstall the clean CAP on a test card:
+
+```bash
+FIDO2_REINSTALL_CONFIRM=YES GP_READER_INDEX=2 npm run card:reinstall
+```
+
 Run the real-card hmac-secret/PRF primitive test:
 
 ```bash
@@ -122,7 +128,7 @@ Observed on 2026-05-20 with an HID Global OMNIKEY 5422 reader and one inserted s
 - Resident/passkey and `hmac-secret` makeCredential returned CTAP `0x27 OPERATION_DENIED`
 - GlobalPlatformPro access worked on reader index `2` with the default development key on this sample
 
-After `FIDO2_RESET_CONFIRM=YES npm run card:reset` on the same sample:
+After `FIDO2_RESET_CONFIRM=YES npm run card:reset` on the same preinstalled sample:
 
 - CTAP reset completed successfully.
 - `uv` changed from `true` to `false`.
@@ -131,9 +137,18 @@ After `FIDO2_RESET_CONFIRM=YES npm run card:reset` on the same sample:
 - Direct CTAP `hmac-secret`/PRF returns two 32-byte outputs only when sent with `options: {"up": false}`.
 - Normal WebAuthn-style auth/PRF with default user presence (`up=true`) still returns CTAP `0x27 OPERATION_DENIED`.
 
-This means the existing installed applet/state is useful for proving the PRF primitive, but it is not acceptable as a browser passkey because browser/WebAuthn clients require user presence. The next product step is replacing the installed FIDO2 package with the clean CAP and rerunning `npm run card:test`.
+That preinstalled applet/state was useful for proving the PRF primitive, but it was not acceptable as a browser passkey because browser/WebAuthn clients require user presence.
 
-That means the sample is real and alive, but the current installed applet/state is not yet acceptable for the product requirement. The next recovery order is:
+After deleting the old package `A0000006472F` and reinstalling this repo's clean `dist/FIDO2.cap`:
+
+- GlobalPlatform registry shows package `A000000647` version `0.4` with applet `A0000006472F0001`.
+- `npm run card:test` passes on the real contact card.
+- The passing marker is `REAL_CARD_FIDO2_HMAC_SECRET_OK`.
+- The real-card PRF test produced two 32-byte PRF outputs through CTAP2 `hmac-secret`.
+
+The current contact-card state is therefore good for CLI-level FIDO2 auth + passkey PRF validation. Browser validation still depends on whether the OS/browser can expose this PC/SC smartcard as a WebAuthn authenticator.
+
+For a failing or preinstalled sample, use this recovery order:
 
 ```bash
 # non-destructive inventory
@@ -147,7 +162,7 @@ FIDO2_RESET_CONFIRM=YES npm run card:reset
 npm run card:test
 
 # if reset does not fix hmac-secret/rk, reinstall the CAP on a test sample
-GP_READER_INDEX=2 npm run card:install
+FIDO2_REINSTALL_CONFIRM=YES GP_READER_INDEX=2 npm run card:reinstall
 npm run card:test
 ```
 

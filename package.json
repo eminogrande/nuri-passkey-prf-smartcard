@@ -13,6 +13,7 @@
     "web:prf": "scripts/serve-prf-test.sh",
     "card:build": "scripts/build-fido2-cap.sh",
     "card:install": "scripts/install-fido2-card.sh",
+    "card:reinstall": "scripts/reinstall-fido2-card.sh",
     "card:reset": "scripts/reset-real-fido2-card.sh",
     "card:test": "scripts/test-real-fido2-card.sh"
   },

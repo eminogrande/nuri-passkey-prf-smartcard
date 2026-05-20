@@ -36,7 +36,7 @@ if [[ ! -d "$JC_HOME/lib" ]]; then
 fi
 
 if [[ -f "$BASELINE/requirements.txt" ]]; then
-  REQ_ID="$(shasum -a 256 "$BASELINE/requirements.txt" | awk '{print $1}')"
+  REQ_ID="pyscard-2.0.7:$(shasum -a 256 "$BASELINE/requirements.txt" | awk '{print $1}')"
 else
   REQ_ID="fallback-fido2-1.1.2"
 fi
@@ -46,6 +46,7 @@ if [[ ! -x "$VENV/bin/python" ]] || [[ ! -f "$VENV/.nuri-requirements" ]] || [[ 
   "$PYTHON_BIN" -m venv "$VENV"
   if [[ -f "$BASELINE/requirements.txt" ]]; then
     "$VENV/bin/pip" install -r "$BASELINE/requirements.txt"
+    "$VENV/bin/pip" install 'pyscard==2.0.7'
   else
     "$VENV/bin/pip" install \
       'fido2[pcsc]==1.1.2' \
