@@ -47,7 +47,8 @@
         font-weight: 650;
       }
 
-      input {
+      input,
+      select {
         box-sizing: border-box;
         width: 100%;
         border: 1px solid #c9d0db;
@@ -56,6 +57,12 @@
         font: inherit;
         background: #ffffff;
         color: #17191c;
+      }
+
+      .control-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 14px;
       }
 
       .buttons {
@@ -116,6 +123,7 @@
         }
 
         input,
+        select,
         pre {
           background: #171b21;
           color: #f4f6f8;
@@ -145,6 +153,25 @@
 
         <label for="salt2">PRF second input</label>
         <input id="salt2" value="nuri browser prf second input" />
+
+        <div class="control-grid">
+          <div>
+            <label for="userVerification">User verification</label>
+            <select id="userVerification">
+              <option value="discouraged" selected>discouraged</option>
+              <option value="preferred">preferred</option>
+              <option value="required">required</option>
+            </select>
+          </div>
+          <div>
+            <label for="residentKey">Resident key</label>
+            <select id="residentKey">
+              <option value="required" selected>required</option>
+              <option value="preferred">preferred</option>
+              <option value="discouraged">discouraged</option>
+            </select>
+          </div>
+        </div>
 
         <div class="buttons">
           <button id="register">Register Passkey</button>
@@ -198,6 +225,8 @@
           username: document.querySelector('#username').value.trim() || 'nuri-local-test',
           salt1: textBytes(document.querySelector('#salt1').value),
           salt2: textBytes(document.querySelector('#salt2').value),
+          userVerification: document.querySelector('#userVerification').value,
+          residentKey: document.querySelector('#residentKey').value,
         };
       }
 
@@ -211,32 +240,34 @@
 
       async function register() {
         if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
-        const { username, salt1 } = getInputs();
+        const { username, salt1, userVerification, residentKey } = getInputs();
         const userId = randomBytes(32);
-        const credential = await navigator.credentials.create({
-          publicKey: {
-            challenge: randomBytes(32),
-            rp: { name: rpName },
-            user: {
-              id: userId,
-              name: username,
-              displayName: username,
-            },
-            pubKeyCredParams: [
-              { type: 'public-key', alg: -7 },
-              { type: 'public-key', alg: -257 },
-            ],
-            authenticatorSelection: {
-              residentKey: 'preferred',
-              requireResidentKey: false,
-              userVerification: 'preferred',
-            },
-            timeout: 120000,
-            attestation: 'none',
-            extensions: {
-              prf: { eval: { first: salt1 } },
-            },
+        const publicKey = {
+          challenge: randomBytes(32),
+          rp: { name: rpName },
+          user: {
+            id: userId,
+            name: username,
+            displayName: username,
           },
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7 },
+            { type: 'public-key', alg: -257 },
+          ],
+          authenticatorSelection: {
+            residentKey,
+            requireResidentKey: residentKey === 'required',
+            userVerification,
+          },
+          timeout: 120000,
+          attestation: 'none',
+          extensions: {
+            prf: { eval: { first: salt1 } },
+          },
+        };
+        print('Registration request', summarizeRequest(publicKey));
+        const credential = await navigator.credentials.create({
+          publicKey,
         });
         const extensionResults = credential.getClientExtensionResults();
         const saved = {
@@ -259,17 +290,19 @@
         if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
         const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
         if (!saved) throw new Error('Register a local passkey first.');
-        const { salt1, salt2 } = getInputs();
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge: randomBytes(32),
-            allowCredentials: [{ type: 'public-key', id: fromBase64Url(saved.rawId) }],
-            userVerification: 'preferred',
-            timeout: 120000,
-            extensions: {
-              prf: { eval: { first: salt1, second: salt2 } },
-            },
+        const { salt1, salt2, userVerification } = getInputs();
+        const publicKey = {
+          challenge: randomBytes(32),
+          allowCredentials: [{ type: 'public-key', id: fromBase64Url(saved.rawId) }],
+          userVerification,
+          timeout: 120000,
+          extensions: {
+            prf: { eval: { first: salt1, second: salt2 } },
           },
+        };
+        print('Authentication request', summarizeRequest(publicKey));
+        const assertion = await navigator.credentials.get({
+          publicKey,
         });
         const extensionResults = assertion.getClientExtensionResults();
         setStatus('Authenticated.');
@@ -293,11 +326,29 @@
         return normalized;
       }
 
+      function summarizeRequest(publicKey) {
+        return {
+          origin: location.origin,
+          rpId: publicKey.rp?.id || location.hostname,
+          userVerification: publicKey.userVerification || publicKey.authenticatorSelection?.userVerification,
+          residentKey: publicKey.authenticatorSelection?.residentKey,
+          requireResidentKey: publicKey.authenticatorSelection?.requireResidentKey,
+          allowCredentials: publicKey.allowCredentials?.length || 0,
+          prfRequested: Boolean(publicKey.extensions?.prf),
+        };
+      }
+
       document.querySelector('#register').addEventListener('click', () => {
         setStatus('Waiting for authenticator...');
         register().catch((error) => {
           setStatus('Registration failed.');
-          print('Error', { name: error.name, message: error.message });
+          print('Registration error', {
+            name: error.name,
+            message: error.message,
+            userVerification: document.querySelector('#userVerification').value,
+            residentKey: document.querySelector('#residentKey').value,
+            origin: location.origin,
+          });
         });
       });
 
@@ -305,7 +356,13 @@
         setStatus('Waiting for authenticator...');
         authenticate().catch((error) => {
           setStatus('Authentication failed.');
-          print('Error', { name: error.name, message: error.message });
+          print('Authentication error', {
+            name: error.name,
+            message: error.message,
+            userVerification: document.querySelector('#userVerification').value,
+            residentKey: document.querySelector('#residentKey').value,
+            origin: location.origin,
+          });
         });
       });
 

@@ -1,6 +1,16 @@
 # Real Card Key Handling
 
-This file is intentionally non-secret. Do not commit GlobalPlatform/SCP keys, IDEX vendor keys, exported development keys, attestation private keys, or card seed material to this repository.
+This file is intentionally non-secret. Do not commit GlobalPlatform/SCP keys, Feitian vendor keys, exported development keys, attestation private keys, PINs, or card seed material to this repository.
+
+## Current Target Cards
+
+Keep these categories separate during testing:
+
+| Category | Meaning | Current state |
+| --- | --- | --- |
+| Feitian fingerprint/FIDO2 sample | The card currently being tested by PC/SC and phone NFC. | Active target for FIDO2 PIN, auth, and PRF. Fingerprint integration is not implemented in the clean CAP yet. |
+| J3R150/J3R180/J3R200/J3H145 Java Cards | Blank or unfused JavaCard buy candidates for loading this CAP. | Not the same as the Feitian fingerprint card unless a seller explicitly says so. Need GP/SCP keys and algorithm confirmation. |
+| MuSig2/Satochip work | Optional future second applet/AID for Taproot partial signing. | Out of the current FIDO2-first acceptance path. |
 
 ## When Keys Are Needed
 
@@ -10,13 +20,14 @@ No GlobalPlatform keys are needed for these operations:
 - CTAP/FIDO2 `getInfo`.
 - FIDO2 makeCredential/getAssertion tests.
 - CTAP/FIDO2 reset through `npm run card:reset`.
+- FIDO2 PIN status, set, change, and verify through CTAP `clientPin`.
 
 GlobalPlatform/SCP keys are needed for these operations:
 
 - Listing applets with authenticated GP access on a non-default-key card.
 - Deleting applets/packages.
 - Installing `dist/FIDO2.cap`.
-- Loading an IDEX IBA/fingerprint applet or Satochip/MuSig2 applet.
+- Loading a fingerprint integration applet or Satochip/MuSig2 applet.
 - Changing card manager keys.
 
 The current contact sample observed on 2026-05-20 accepted the GlobalPlatformPro default development key and used SCP02 DES3 keys. Do not assume other samples do the same.
@@ -27,76 +38,127 @@ Observed with HID Global OMNIKEY 5422:
 
 | Physical card | PC/SC/OpenSC reader | GlobalPlatformPro reader | Current status |
 | --- | --- | --- | --- |
-| Contact card, likely Feitian sample | `opensc-tool -r 1 ...` | `gp -r2 ...` or `GP_READER_INDEX=2` | Present, ATR `3B:80:80:01:01`, OpenSC name `MuscleApplet`, GP applet list accessible with default development key. |
-| Contactless/NFC IDEX card | `opensc-tool -r 0 ...` | likely `gp -r1 ...` or `GP_READER_INDEX=1` | Not connected during the last probe. Reposition the card on the OMNIKEY contactless antenna until `opensc-tool -r 0 -a` returns an ATR. |
+| Feitian fingerprint/FIDO2 contact sample | `opensc-tool -r 1 ...` | `gp -r2 ...` or `GP_READER_INDEX=2` | Present, ATR `3B:80:80:01:01`, OpenSC name `MuscleApplet`, GP applet list accessible with default development key. |
+| Feitian fingerprint/FIDO2 over phone NFC | Native Apple/browser NFC prompt | Not controlled by GP tooling here | Recognized by phone and asks for PIN, but the phone-side PIN setup loop must be diagnosed with the browser test page and PC/SC PIN status. |
 
-Use exactly one card per slot while testing, and label command output with the physical card/sample.
+Use exactly one active card while testing, and label command output with the physical sample.
 
 On 2026-05-20, macOS `system_profiler SPSmartCardsDataType` reported:
 
 - `HID Global OMNIKEY 5422 Smartcard Reader 01`: no card present.
 - `HID Global OMNIKEY 5422 Smartcard Reader`: ATR `3B80800101`.
 
-That means the IDEX NFC card was not yet close enough or not being polled successfully, even though the reader itself exists.
-
 After CTAP reset on the original preinstalled contact sample, direct CTAP `hmac-secret` worked only with `up=false`. Normal user-presence (`up=true`) assertions still failed with CTAP `0x27 OPERATION_DENIED`.
 
 After deleting package `A0000006472F` and reinstalling this repo's clean `dist/FIDO2.cap`, the contact card passed `npm run card:test` with `REAL_CARD_FIDO2_HMAC_SECRET_OK`. The installed package is now `A000000647` version `0.4` with applet `A0000006472F0001`.
 
-## Local IDEX Material Already Found
+Current `getInfo` after clean CAP install:
 
-The following sibling-folder files look relevant. They contain or reference development card keys or IDEX procedures; treat them as local secrets and do not copy their key values into this repo:
+- `versions`: `FIDO_2_0`, `FIDO_2_1`, `FIDO_2_1_PRE`
+- `extensions`: `uvm`, `credBlob`, `credProtect`, `hmac-secret`, `largeBlobKey`, `minPinLength`
+- `clientPin`: `false`
+- `pin_uv_protocols`: `[2, 1]`
+- `min_pin_length`: `4`
+- `max_pin_length`: `63`
+- `makeCredUvNotRqd`: `true`
 
-- `../FIDO2Applet-working-idex/SatochipApplet/SCP03_KEYS.md`
-- `../FIDO2Applet-working-idex/satochip/applet/SCP03_KEYS.md`
-- `../FIDO2Applet-working-idex/satochip/keys/CARD_KEYS.md`
-- `../FIDO2Applet-working-idex/satochip/nuri-musig2/CARD_KEYS.md`
-- `../FIDO2Applet-working-idex/satochip/nuri-musig2/GET_CARD_KEYS.md`
-- `../FIDO2Applet-working-idex/satochip/.env`
-- `../FIDO2Applet-working-idex/satochip/CARD_STATUS_REPORT.md`
-- `../FIDO2Applet-working-idex/satochip/SUCCESS_CARD_UNLOCKED.md`
-- `../FIDO2Applet-working-idex/COMPLETE_MUSIG2_GUIDE.md`
-- `../0502-nuri-idex/idex-downloads/Enrollment_Guidance-240917-371-13647/IDEX_Enrollment_Guide.pdf`
-- `../0502-nuri-idex/idex-downloads/IBA_Release_v1_7 V2/`
+`clientPin: false` means the card supports CTAP client PIN and no PIN is currently set. It does not mean a fixed factory PIN exists.
 
-The local notes mention an IDEX/IBA service AID family beginning with `A000000905`, including `A00000090501000101` for the IBA service and `A00000090501000301` for an IBA client/test applet. They also mention development APDUs that return ENC/MAC/DEK material for test cards. Do not use those mechanisms on production cards unless the manufacturer explicitly documents them for development samples.
+## PIN Workflow
 
-## How To Use Existing Keys Safely
+The FIDO2 PIN lives on the card. A production card should be shipped without a shared preset PIN; the first user sets it through CTAP `clientPin setPin`.
 
-Load keys through shell environment variables only for the current terminal session:
+For deterministic development, use the PC/SC path first:
 
 ```bash
-set -a
-source ../FIDO2Applet-working-idex/satochip/.env
-set +a
-gp -r1 --key-enc "$SCP03_ENC" --key-mac "$SCP03_MAC" --key-dek "$SCP03_DEK" -l
-GP_READER_INDEX=1 npm run card:install
+npm run card:pin:status
+npm run card:pin:set
+npm run card:pin:verify
+npm run card:test
 ```
 
-The install script accepts either `GP_KEY_ENC`/`GP_KEY_MAC`/`GP_KEY_DEK` or the existing local aliases `SCP03_ENC`/`SCP03_MAC`/`SCP03_DEK`.
+Expected state transition:
 
-For cards with one default/master key:
+1. Before setting: `clientPin: false`.
+2. After `card:pin:set`: `FIDO2_PIN_SET_OK` and `clientPin: true`.
+3. After `card:pin:verify`: `FIDO2_PIN_VERIFY_OK`.
+4. `npm run card:test` should still print `REAL_CARD_FIDO2_HMAC_SECRET_OK`.
+
+If the phone loops while asking to enter the new PIN twice, check the PC/SC status immediately. If `clientPin` is still `false`, the phone did not complete CTAP `setPin`. If `clientPin` changed to `true`, the phone may be failing later during registration or PRF and the browser page output matters.
+
+Do not paste PINs into chat, commit logs, environment files, or npm arguments.
+
+## Browser/NFC Workflow
+
+Start the local test page:
 
 ```bash
-GP_READER_INDEX=2 GP_KEY="404142434445464748494A4B4C4D4E4F" npm run card:install
+npm run web:prf
 ```
 
-Only use `GP_FORCE=YES` on a development sample when the local card notes or vendor explicitly say installation is allowed but GlobalPlatformPro is blocking a development-card operation:
+For phone testing, expose it through HTTPS, for example with ngrok:
 
 ```bash
-GP_FORCE=YES GP_READER_INDEX=1 npm run card:install
+ngrok http 8765
 ```
 
-## What To Search For In Email Or Vendor Files
+Open the HTTPS tunnel URL ending in `/prf-test.html` on the phone.
 
-Search for these terms:
+Test in this order:
 
-- `IDEX`
-- `IDX56`
-- `IBA`
-- `Enrollment Guide`
-- `IBA Release`
+1. `User verification = discouraged`, `Resident key = required`, then `Register Passkey`.
+2. If registration succeeds, tap `Authenticate + PRF` and confirm that `firstHex` and `secondHex` are present.
+3. If no-UV succeeds, retry `User verification = preferred`.
+4. Only after a PIN is set and verified through PC/SC, retry `User verification = required`.
+
+This separates a normal PRF/passkey failure from a PIN/UV failure. The page logs the request settings and browser error name/message.
+
+The existing `bitcoinlightning` app intentionally uses `residentKey: "required"` and `userVerification: "required"` when creating and restoring the wallet passkey. That is appropriate for a wallet but it forces the browser/platform into a UV path. On the current clean CAP, UV means CTAP client PIN because Feitian fingerprint UV is not integrated yet.
+
+## Feitian Fingerprint State
+
+The current clean CAP does not use the Feitian fingerprint sensor. Passing `npm run card:test` only proves FIDO2 auth plus CTAP2 `hmac-secret` PRF through the contact PC/SC path.
+
+To support fingerprint UV cleanly, Feitian or the card supplier must provide documentation for:
+
+- Whether fingerprint enrollment and matching are exposed to custom Java Card applets.
+- The Java Card API, shareable interface, or APDU service AID for fingerprint verification.
+- Whether the FIDO2 applet can receive a trusted on-card UV result.
+- Enrollment/reset lifecycle.
+- Security boundaries, retry counters, lockout behavior, and sample code.
+
+Until that is implemented and tested, the product path is PIN-backed FIDO2 PRF/auth, not fingerprint-backed UV.
+
+## What To Ask Vendors
+
+For Feitian fingerprint/FIDO2 samples:
+
+- Exact card model, chip, Java Card version, and GlobalPlatform version.
+- Whether custom CAP loading is supported on the fingerprint card.
+- SCP mode: SCP02 or SCP03.
+- ISD AID.
+- GP key version and key IDs.
+- ENC/MAC/DEK keys, or the single master/TK key if that is what the vendor provides.
+- Fingerprint API documentation for custom applets, if available.
+- Whether FIDO2 PIN and fingerprint UV are handled by vendor firmware, a Java Card applet, or both.
+
+For AliExpress/Alibaba/eBay Java Cards:
+
+- Exact chip and OS name.
+- Whether it is unfused/unlocked.
+- SCP mode: SCP02 or SCP03.
+- ISD AID.
+- GP key version and key IDs.
+- ENC/MAC/DEK keys, or the single master/TK key if that is what the seller provides.
+- Confirmation that custom CAP loading is allowed.
+
+Search email or vendor files for:
+
+- `Feitian`
+- `Fingerprint`
+- `FIDO2`
 - `SCP03`
+- `SCP02`
 - `KENC`
 - `KMAC`
 - `KDEK`
@@ -107,31 +169,10 @@ Search for these terms:
 - `TK value`
 - `development card`
 - `unlocked sample`
-- `A00000090501000101`
 
-For Feitian/AliExpress/Alibaba-style Java Cards, ask for:
+## FIDO2-First Acceptance Order
 
-- Exact chip and OS name.
-- Whether it is unfused/unlocked.
-- SCP mode: SCP02 or SCP03.
-- ISD AID.
-- GP key version and key IDs.
-- ENC/MAC/DEK keys, or the single master/TK key if that is what the seller provides.
-- Confirmation that custom CAP loading is allowed.
-
-## IDEX/FIDO2 Product Direction
-
-For the FIDO2-first product, IDEX biometric support should be optional. The minimal PRF/passkey requirement is still CTAP2 `hmac-secret` plus resident credentials. IDEX IBA can later provide on-card user verification, but it increases the build and audit surface because the applet must compile against IDEX shareable-interface exports and call the IBA service AID.
-
-Do not confuse PIN with fingerprint:
-
-- FIDO2 PIN is CTAP `clientPin`; the user sets it and the verifier/retry state is stored on-card.
-- IDEX fingerprint is internal user verification through the IBA applet/service; it is not active in the clean CAP currently installed on the contact sample.
-- Shipping with one preset PIN is not acceptable. A production card should be un-PINned at delivery and guide the user through first-use PIN setup or biometric enrollment.
-- The current CLI test passes without PIN because it requests user verification as `discouraged`, and the clean applet advertises `makeCredUvNotRqd: true`.
-
-Acceptance order:
-
-1. Make the clean FIDO2 applet pass `npm run card:test` on a real card.
-2. Confirm browser WebAuthn PRF with `npm run web:prf`.
-3. Only then add IDEX fingerprint UV behind a build flag and test it on the IDEX sample.
+1. Make the clean FIDO2 applet pass `npm run card:test` on the real card.
+2. Set and verify a FIDO2 PIN through `npm run card:pin:set` and `npm run card:pin:verify`.
+3. Confirm browser WebAuthn PRF with the diagnostic page over HTTPS/NFC.
+4. Only then add Feitian fingerprint UV if the vendor provides enough API documentation to implement it cleanly.

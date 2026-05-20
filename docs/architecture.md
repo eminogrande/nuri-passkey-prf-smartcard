@@ -37,7 +37,7 @@ Keep:
 
 Avoid in the first build:
 
-- IDEX biometric integration
+- Feitian fingerprint integration
 - MuSig2 inside FIDO2 code paths
 - custom PRF CTAP extension
 - large blobs and enterprise attestation unless needed by target clients

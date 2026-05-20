@@ -65,19 +65,40 @@ Use `Register Passkey`, then `Authenticate + PRF`. A successful PRF-capable auth
 
 Important limitation: a smartcard in a PC/SC reader is not automatically visible to Chrome, Firefox, or Safari as a roaming WebAuthn authenticator. The page works with whatever authenticator the browser exposes, for example platform passkeys, a USB/NFC security key, or this smartcard later if the OS/browser can reach it through NFC or a CTAP bridge.
 
-## PIN, Fingerprint, And First Use
+## PIN, Feitian Fingerprint, And First Use
 
 Do not ship cards with a shared preset FIDO2 PIN. The intended production state is no FIDO2 PIN set; the first user sets their own PIN through CTAP `clientPin setPin`, and the PIN verifier/retry state lives on the card.
 
-The current clean CAP supports FIDO2 PIN capability but does not integrate the IDEX fingerprint sensor. Current real-card `getInfo` after clean CAP install showed `clientPin: false`, `min_pin_length: 4`, `pin_uv_protocols: [2, 1]`, and `makeCredUvNotRqd: true`.
+The current active target is the Feitian fingerprint/FIDO2 smartcard sample. The clean CAP supports FIDO2 PIN capability but does not integrate the Feitian fingerprint sensor yet. Current real-card `getInfo` after clean CAP install showed `clientPin: false`, `min_pin_length: 4`, `pin_uv_protocols: [2, 1]`, and `makeCredUvNotRqd: true`.
 
 The real-card CLI PRF test intentionally sets WebAuthn user verification to `discouraged`. That is why it can pass without a PIN:
 
 - FIDO2 authentication and CTAP2 `hmac-secret` PRF can work without PIN when the relying party does not require user verification.
 - A browser or relying party may still require PIN/UV for a discoverable passkey, account policy, or PRF flow.
-- Fingerprint-based UV is a separate integration step: the applet must call the IDEX IBA shareable interface and advertise internal UV only when that path is working.
+- Fingerprint-based UV is a separate integration step: the applet must use Feitian-documented fingerprint enrollment/verification APIs and advertise internal UV only when that path is working.
 
-If a phone loops during first-use PIN setup, that is not a valid product state. It likely means the phone/browser/NFC path is not completing CTAP PIN setup cleanly. For development, set a temporary PIN through the working PC/SC path and retry the phone. For production, either first-use PIN setup over the intended transport must work reliably, or fingerprint UV must be implemented and verified on the IDEX card.
+If a phone loops during first-use PIN setup, that is not a valid product state. It likely means the phone/browser/NFC path is not completing CTAP PIN setup cleanly, or the page requested a UV mode the current applet cannot satisfy through that transport. For development, set a PIN through the working PC/SC path and retry the phone. For production, either first-use PIN setup over the intended transport must work reliably, or Feitian fingerprint UV must be implemented and verified on that exact card family.
+
+Inspect the current card PIN state:
+
+```bash
+npm run card:pin:status
+```
+
+Set the first FIDO2 PIN on the card through PC/SC:
+
+```bash
+npm run card:pin:set
+```
+
+Verify or change it later:
+
+```bash
+npm run card:pin:verify
+npm run card:pin:change
+```
+
+The PIN script uses `getpass`, so the PIN is not placed in shell history or npm arguments.
 
 ## Flashing A Real Card
 
@@ -242,7 +263,7 @@ Recommended first order:
 - `docs/fido2-prf-baseline.md`: FIDO2 PRF baseline and simulator notes.
 - `docs/fido2-card-research.md`: online card research and buying/test matrix.
 - `docs/hardware-manufacturer-spec.md`: card requirements and acceptance tests to send to suppliers.
-- `docs/real-card-key-handling.md`: non-secret key-handling and IDEX/Feitian sample notes.
+- `docs/real-card-key-handling.md`: non-secret key-handling and current Feitian sample notes.
 - `docs/musig2-card-extension.md`: optional MuSig2 APDU contract.
 - `src/musig2/`: MuSig2 method-level and APDU-level simulators.
 - `test/`: Node MuSig2 tests and Python FIDO2 PRF mapping test.
