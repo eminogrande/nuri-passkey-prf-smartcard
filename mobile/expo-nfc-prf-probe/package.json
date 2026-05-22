@@ -1,0 +1,48 @@
+{
+  "name": "expo-nfc-prf-probe",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "start:profile": "../../scripts/run-expo-nfc-prf-probe.sh start",
+    "prebuild": "expo prebuild",
+    "android": "expo run:android",
+    "android:profile": "../../scripts/run-expo-nfc-prf-probe.sh android",
+    "android:server": "expo start --android --dev-client",
+    "ios": "expo run:ios",
+    "ios:profile": "../../scripts/run-expo-nfc-prf-probe.sh ios --device",
+    "ios:server": "expo start --ios --dev-client",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/ciphers": "1.3.0",
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0",
+    "base64-js": "1.5.1",
+    "cborg": "5.1.1",
+    "expo": "~55.0.25",
+    "expo-status-bar": "~55.0.6",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-get-random-values": "~1.11.0",
+    "react-native-nfc-manager": "4.0.0-beta.7"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "typescript": "~5.9.2"
+  },
+  "private": true,
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "react-native-nfc-manager"
+        ]
+      }
+    }
+  }
+}

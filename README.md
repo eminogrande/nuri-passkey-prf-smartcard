@@ -61,11 +61,147 @@ Open:
 http://localhost:8765/prf-test.html
 ```
 
+Expose the same page over HTTPS for Android Chrome or another phone:
+
+```bash
+npm run web:tunnel
+```
+
+The current development tunnel is:
+
+```text
+https://7b8b-90-187-235-105.ngrok-free.app/prf-test.html?v=android7&preset=android-noprf
+```
+
 Use `Register Passkey`, then `Authenticate + PRF`. A successful PRF-capable authenticator returns 32-byte `firstHex` and `secondHex` values.
 
 Important limitation: a smartcard in a PC/SC reader is not automatically visible to Chrome, Firefox, or Safari as a roaming WebAuthn authenticator. The page works with whatever authenticator the browser exposes, for example platform passkeys, a USB/NFC security key, or this smartcard later if the OS/browser can reach it through NFC or a CTAP bridge.
 
 If authentication succeeds but `prf` is `null`, the selected browser/authenticator path did not return WebAuthn PRF extension output. On iOS/iPadOS, external NFC authenticators can authenticate successfully while PRF extension data is not passed through. In that case the card can still pass the repo's PC/SC `hmac-secret` test, but browser PRF over phone NFC is blocked by the platform path.
+
+Android is a separate moving target. Google Play services v26.03 announced CTAP2 account authentication over NFC security keys, but current PRF-specific guidance still treats Android Chrome roaming-key PRF as USB-supported and NFC-unsupported. Test basic NFC registration with PRF disabled first, then test PRF; those are two different signals.
+
+Observed Android Chrome NFC result on 2026-05-22: the no-PRF diagnostic still failed with `NotReadableError` after the phone scanned the card. That means this Android browser/device path is failing basic roaming NFC WebAuthn before PRF or PIN policy is relevant. Continue with native NFC ISO-DEP and USB security-key comparison tests.
+
+## Offline Backup PRF CLI
+
+For an offline backup use case, the card can derive a stable 32-byte secret without being a wallet signer. This uses the same WebAuthn PRF mapping as browsers: the user salt is transformed as `SHA-256("WebAuthn PRF\0" || salt)` and sent through CTAP2 `hmac-secret`.
+
+Enroll one credential profile on the card:
+
+```bash
+npm run card:prf:enroll
+```
+
+Or run the full stability proof:
+
+```bash
+npm run card:prf:selftest
+```
+
+That command enrolls `.nuri-card-prf/default.json` if missing, derives the default salt twice, derives a different salt once, and only passes if:
+
+- same card credential + same salt returns the same PRF;
+- same card credential + different salt returns a different PRF;
+- the card returns a real 32-byte WebAuthn PRF result.
+
+Derive the default backup secret later:
+
+```bash
+npm run card:prf:derive
+```
+
+Print only the hex secret:
+
+```bash
+npm run card:prf:derive -- --raw
+```
+
+Use a different context salt:
+
+```bash
+npm run card:prf:derive -- --salt "nuri-wallet-backup-v1:alice"
+```
+
+The profile JSON is not the PRF secret, but keep a backup of it. It contains the RP ID and credential ID needed to ask the same card credential for the same PRF. If a production profile should require a FIDO2 PIN, enroll and derive with user verification:
+
+```bash
+npm run card:prf:enroll -- --profile pin-backup --user-verification required --pin-prompt
+npm run card:prf:derive -- --profile pin-backup --user-verification required --pin-prompt
+```
+
+Never run two PC/SC card commands against the same reader at the same time; the reader can reset the card mid-APDU.
+
+## Native Mobile NFC PRF Probe
+
+There is now a minimal Expo SDK 55 app in `mobile/expo-nfc-prf-probe`.
+
+It is intentionally not a PWA and not a WebAuthn wrapper. It talks ISO-DEP NFC directly:
+
+1. select FIDO AID `A0000006472F0001`;
+2. run CTAP2 `authenticatorGetInfo`;
+3. run CTAP2 `authenticatorClientPIN/getKeyAgreement`;
+4. run CTAP2 `authenticatorGetAssertion` with `hmac-secret`;
+5. decrypt the extension output and display the 32-byte PRF.
+
+Prepare a desktop profile first:
+
+```bash
+npm run card:prf:selftest
+cat .nuri-card-prf/default.json
+```
+
+Then install the mobile app dependencies:
+
+```bash
+cd mobile/expo-nfc-prf-probe
+npm install
+npm run typecheck
+```
+
+Paste the `credential_id` from `.nuri-card-prf/default.json` into the app. Keep `RP ID` as `nuri.local` and `PRF Salt` as `nuri-offline-backup-v1` if you want the phone result to match:
+
+```bash
+npm run card:prf:derive -- --raw
+```
+
+Android is the easiest real-device path without an Apple developer account:
+
+```bash
+npm run mobile:android
+```
+
+That reads `.nuri-card-prf/default.json`, injects the saved RP ID and credential ID into the app through Expo public env vars, then builds and installs a native Android development build. It needs Android Studio/SDK and a USB-debugging-enabled Android phone. NFC testing needs a physical Android phone, not an emulator. After installation, run `npm run mobile:start` for later JS iterations.
+
+The wrapper uses the Homebrew Android SDK path `/opt/homebrew/share/android-commandlinetools` when present and forces JDK 17 on macOS, because Java 24 breaks the native CMake build. The verified debug APK output is:
+
+```text
+mobile/expo-nfc-prf-probe/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+In the app, tap `Read Card Info` first. If it lists `hmac-secret`, tap `Derive PRF` and compare the `prfHex` result with:
+
+```bash
+npm run card:prf:derive -- --raw
+```
+
+iOS needs a native build with NFC Tag Reading capability. The app config includes the NFC plugin, the TAG entitlement, and the ISO7816 select identifier, but the local toolchain still has to sign a physical iPhone build with that capability:
+
+```bash
+cd mobile/expo-nfc-prf-probe
+npm run prebuild -- --platform ios
+npm run ios
+```
+
+This does not run in Expo Go because `react-native-nfc-manager` requires custom native code. On this machine, `expo-doctor` passed all project checks except local Xcode compatibility: Expo SDK 55 requires Xcode `>=26.0.0`, while the installed Xcode is `16.4.0`. Use Android first or upgrade Xcode before trying the iOS NFC build.
+
+The shorter profile-injected iOS command is:
+
+```bash
+npm run mobile:ios
+```
+
+That uses the same `.nuri-card-prf/default.json` profile as Android and passes `--device` so Expo targets a physical iPhone. The iOS path uses CoreNFC ISO7816 APDUs through `react-native-nfc-manager`; it is a native app test, not mobile Safari/WebAuthn PRF.
 
 ## PIN, Feitian Fingerprint, And First Use
 
@@ -277,6 +413,7 @@ Recommended first order:
 - `src/musig2/`: MuSig2 method-level and APDU-level simulators.
 - `test/`: Node MuSig2 tests and Python FIDO2 PRF mapping test.
 - `web/prf-test.html`: self-hosted browser WebAuthn PRF test page.
+- `mobile/expo-nfc-prf-probe/`: native NFC PRF probe app for Android/iOS development builds.
 
 ## Current Recommendation
 
@@ -295,6 +432,13 @@ Useful card references:
 
 - WebAuthn Level 3 PRF extension: https://www.w3.org/TR/webauthn-3/
 - FIDO CTAP2.1 hmac-secret extension: https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html
+- Google System Services release notes, Play services v26.03 NFC CTAP2 note: https://support.google.com/product-documentation/answer/14343500
+- Yubico PRF developer guide and platform support matrix: https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/Developers_Guide_to_PRF.html
+- Expo SDK 55 reference: https://docs.expo.dev/versions/v55.0.0
+- Expo iOS capabilities and entitlements: https://docs.expo.dev/build-reference/ios-capabilities/
+- react-native-nfc-manager Expo/development-build note: https://github.com/revtel/react-native-nfc-manager/wiki/Expo-Go
+- Android ISO-DEP transceive API: https://developer.android.com/reference/android/nfc/tech/IsoDep
+- Apple Core NFC ISO7816 tag API: https://developer.apple.com/documentation/corenfc/nfciso7816tag
 - Bryan Jacobs FIDO2Applet: https://github.com/BryanJacobs/FIDO2Applet
 - scure MuSig2: https://github.com/paulmillr/scure-btc-signer#musig2
 - BIP327 MuSig2: https://bips.dev/327/

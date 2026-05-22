@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "expo-nfc-prf-probe",
+    "slug": "expo-nfc-prf-probe",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "bundleIdentifier": "com.nuri.passkeyprfprobe",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.nuri.passkeyprfprobe",
+      "permissions": [
+        "android.permission.NFC"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "Allow Nuri PRF Probe to talk to the FIDO2 smartcard over NFC.",
+          "selectIdentifiers": [
+            "A0000006472F0001"
+          ],
+          "includeNdefEntitlement": false
+        }
+      ]
+    ]
+  }
+}

@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1e293b" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>Nuri Passkey PRF Test</title>
     <style>
       :root {
@@ -106,6 +108,14 @@
         font-weight: 650;
       }
 
+      .note {
+        border: 1px solid #d9dee7;
+        border-radius: 6px;
+        padding: 12px;
+        background: #ffffff;
+        color: #374151;
+      }
+
       @media (prefers-color-scheme: dark) {
         :root {
           background: #111418;
@@ -118,13 +128,15 @@
 
         section,
         pre,
-        input {
+        input,
+        .note {
           border-color: #333b47;
         }
 
         input,
         select,
-        pre {
+        pre,
+        .note {
           background: #171b21;
           color: #f4f6f8;
         }
@@ -142,6 +154,11 @@
       <p>
         Localhost WebAuthn smoke test for passkey authentication plus the PRF extension. It works
         only with authenticators your browser exposes to WebAuthn.
+      </p>
+      <p class="note">
+        Android browser test: Chrome can support WebAuthn PRF, but Android browser NFC routing for
+        roaming security keys is platform-dependent. If this page returns PRF with Google Password
+        Manager or USB but not NFC, the card still needs the native NFC test app for phone-tap PRF.
       </p>
 
       <section>
@@ -174,9 +191,9 @@
           <div>
             <label for="residentKey">Resident key</label>
             <select id="residentKey">
-              <option value="required" selected>required</option>
+              <option value="discouraged" selected>discouraged</option>
               <option value="preferred">preferred</option>
-              <option value="discouraged">discouraged</option>
+              <option value="required">required</option>
             </select>
           </div>
           <div>
@@ -186,11 +203,34 @@
               <option value="evalByCredential">evalByCredential</option>
             </select>
           </div>
+          <div>
+            <label for="registrationPrf">Registration PRF</label>
+            <select id="registrationPrf">
+              <option value="enabled" selected>enabled</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </div>
+          <div>
+            <label for="authenticationPrf">Authentication PRF</label>
+            <select id="authenticationPrf">
+              <option value="enabled" selected>enabled</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="buttons">
+          <button id="presetAndroid" class="secondary">Android Roaming Preset</button>
+          <button id="presetAndroidNoPrf" class="secondary">Android No-PRF Diagnostic</button>
+          <button id="presetPlatform" class="secondary">Android Platform Preset</button>
+          <button id="presetStrict" class="secondary">Strict Passkey Preset</button>
         </div>
 
         <div class="buttons">
           <button id="register">Register Passkey</button>
           <button id="authenticate">Authenticate + PRF</button>
+          <button id="diagnostics" class="secondary">Diagnostics</button>
+          <button id="install" class="secondary" hidden>Install PWA</button>
           <button id="clear" class="secondary">Clear Local Credential</button>
         </div>
         <div id="status" class="status"></div>
@@ -206,6 +246,17 @@
       const storageKey = 'nuri.passkeyPrf.credential';
       const output = document.querySelector('#output');
       const status = document.querySelector('#status');
+      let installPrompt = null;
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+      }
+
+      window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        installPrompt = event;
+        document.querySelector('#install').hidden = false;
+      });
 
       function randomBytes(length) {
         const out = new Uint8Array(length);
@@ -243,6 +294,8 @@
           userVerification: document.querySelector('#userVerification').value,
           residentKey: document.querySelector('#residentKey').value,
           prfMode: document.querySelector('#prfMode').value,
+          registrationPrf: document.querySelector('#registrationPrf').value,
+          authenticationPrf: document.querySelector('#authenticationPrf').value,
           authenticatorAttachment: document.querySelector('#authenticatorAttachment').value || undefined,
         };
       }
@@ -255,9 +308,53 @@
         status.textContent = message;
       }
 
+      function setPreset({
+        authenticatorAttachment,
+        userVerification,
+        residentKey,
+        prfMode,
+        registrationPrf = 'enabled',
+        authenticationPrf = 'enabled',
+      }) {
+        document.querySelector('#authenticatorAttachment').value = authenticatorAttachment;
+        document.querySelector('#userVerification').value = userVerification;
+        document.querySelector('#residentKey').value = residentKey;
+        document.querySelector('#prfMode').value = prfMode;
+        document.querySelector('#registrationPrf').value = registrationPrf;
+        document.querySelector('#authenticationPrf').value = authenticationPrf;
+        setStatus('Preset applied.');
+        output.textContent = 'Ready.';
+      }
+
+      function androidNoPrfPreset() {
+        return {
+          authenticatorAttachment: 'cross-platform',
+          userVerification: 'discouraged',
+          residentKey: 'discouraged',
+          prfMode: 'eval',
+          registrationPrf: 'disabled',
+          authenticationPrf: 'disabled',
+        };
+      }
+
+      function applyUrlPreset() {
+        const preset = new URLSearchParams(location.search).get('preset');
+        if (!['android-noprf', 'noprf', 'no-prf'].includes(preset)) return;
+        setPreset(androidNoPrfPreset());
+        setStatus('Android No-PRF Diagnostic preset applied from URL.');
+        print('Android No-PRF Diagnostic ready', {
+          registrationPrf: document.querySelector('#registrationPrf').value,
+          authenticationPrf: document.querySelector('#authenticationPrf').value,
+          userVerification: document.querySelector('#userVerification').value,
+          authenticatorAttachment: document.querySelector('#authenticatorAttachment').value,
+          residentKey: document.querySelector('#residentKey').value,
+          nextStep: 'Tap Register Passkey. Android should not receive a PRF request on registration.',
+        });
+      }
+
       async function register() {
         if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
-        const { username, userVerification, residentKey, authenticatorAttachment } = getInputs();
+        const { username, userVerification, residentKey, authenticatorAttachment, registrationPrf } = getInputs();
         const userId = randomBytes(32);
         const publicKey = {
           challenge: randomBytes(32),
@@ -279,9 +376,7 @@
           },
           timeout: 120000,
           attestation: 'none',
-          extensions: {
-            prf: {},
-          },
+          ...(registrationPrf === 'enabled' ? { extensions: { prf: {} } } : {}),
         };
         const capabilities = await getClientCapabilities();
         print('Registration request', {
@@ -314,11 +409,42 @@
         });
       }
 
+      async function diagnostics() {
+        const capabilities = await getClientCapabilities();
+        const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+        print('Browser diagnostics', {
+          href: location.href,
+          origin: location.origin,
+          hostname: location.hostname,
+          isSecureContext,
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          standalone:
+            window.matchMedia?.('(display-mode: standalone)').matches ||
+            navigator.standalone ||
+            false,
+          publicKeyCredential: Boolean(window.PublicKeyCredential),
+          conditionalMediation:
+            Boolean(window.PublicKeyCredential?.isConditionalMediationAvailable) &&
+            (await PublicKeyCredential.isConditionalMediationAvailable().catch(() => false)),
+          userVerifyingPlatformAuthenticator:
+            Boolean(window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable) &&
+            (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(() => false)),
+          browserCapabilities: capabilities,
+          savedCredential: saved
+            ? {
+                id: saved.id,
+                createdAt: saved.createdAt,
+              }
+            : null,
+        });
+      }
+
       async function authenticate() {
         if (!window.PublicKeyCredential) throw new Error('WebAuthn is not available in this browser.');
         const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
         if (!saved) throw new Error('Register a local passkey first.');
-        const { salt1, salt2, userVerification, prfMode } = getInputs();
+        const { salt1, salt2, userVerification, prfMode, authenticationPrf } = getInputs();
         const prfValues = { first: salt1, second: salt2 };
         const prf = prfMode === 'evalByCredential'
           ? { evalByCredential: { [saved.id]: prfValues } }
@@ -328,9 +454,7 @@
           allowCredentials: [{ type: 'public-key', id: fromBase64Url(saved.rawId) }],
           userVerification,
           timeout: 120000,
-          extensions: {
-            prf,
-          },
+          ...(authenticationPrf === 'enabled' ? { extensions: { prf } } : {}),
         };
         const capabilities = await getClientCapabilities();
         print('Authentication request', {
@@ -435,6 +559,14 @@
         };
       }
 
+      function registrationSuggestion() {
+        const registrationPrf = document.querySelector('#registrationPrf').value;
+        if (registrationPrf === 'disabled') {
+          return 'No-PRF diagnostic failed. Android NFC WebAuthn is failing before PRF; next test is native NFC IsoDep or USB security key comparison.';
+        }
+        return 'Try Android No-PRF Diagnostic. If that passes, Android NFC WebAuthn works but PRF creation is blocked.';
+      }
+
       document.querySelector('#register').addEventListener('click', () => {
         setStatus('Waiting for authenticator...');
         register().catch((error) => {
@@ -446,7 +578,10 @@
             authenticatorAttachment: document.querySelector('#authenticatorAttachment').value || 'any',
             residentKey: document.querySelector('#residentKey').value,
             prfMode: document.querySelector('#prfMode').value,
+            registrationPrf: document.querySelector('#registrationPrf').value,
+            authenticationPrf: document.querySelector('#authenticationPrf').value,
             origin: location.origin,
+            suggestedNextAttempt: registrationSuggestion(),
           });
         });
       });
@@ -462,9 +597,31 @@
             authenticatorAttachment: document.querySelector('#authenticatorAttachment').value || 'any',
             residentKey: document.querySelector('#residentKey').value,
             prfMode: document.querySelector('#prfMode').value,
+            registrationPrf: document.querySelector('#registrationPrf').value,
+            authenticationPrf: document.querySelector('#authenticationPrf').value,
             origin: location.origin,
           });
         });
+      });
+
+      document.querySelector('#diagnostics').addEventListener('click', () => {
+        setStatus('Collected diagnostics.');
+        diagnostics().catch((error) => {
+          setStatus('Diagnostics failed.');
+          print('Diagnostics error', {
+            name: error.name,
+            message: error.message,
+          });
+        });
+      });
+
+      document.querySelector('#install').addEventListener('click', async () => {
+        if (!installPrompt) return;
+        installPrompt.prompt();
+        const choice = await installPrompt.userChoice.catch((error) => ({ outcome: error.message }));
+        installPrompt = null;
+        document.querySelector('#install').hidden = true;
+        print('PWA install result', choice);
       });
 
       document.querySelector('#clear').addEventListener('click', () => {
@@ -472,6 +629,45 @@
         setStatus('Cleared.');
         output.textContent = 'Ready.';
       });
+
+      document.querySelector('#presetAndroid').addEventListener('click', () => {
+        setPreset({
+          authenticatorAttachment: 'cross-platform',
+          userVerification: 'discouraged',
+          residentKey: 'discouraged',
+          prfMode: 'eval',
+          registrationPrf: 'enabled',
+          authenticationPrf: 'enabled',
+        });
+      });
+
+      document.querySelector('#presetAndroidNoPrf').addEventListener('click', () => {
+        setPreset(androidNoPrfPreset());
+      });
+
+      document.querySelector('#presetPlatform').addEventListener('click', () => {
+        setPreset({
+          authenticatorAttachment: 'platform',
+          userVerification: 'preferred',
+          residentKey: 'required',
+          prfMode: 'eval',
+          registrationPrf: 'enabled',
+          authenticationPrf: 'enabled',
+        });
+      });
+
+      document.querySelector('#presetStrict').addEventListener('click', () => {
+        setPreset({
+          authenticatorAttachment: 'cross-platform',
+          userVerification: 'required',
+          residentKey: 'required',
+          prfMode: 'eval',
+          registrationPrf: 'enabled',
+          authenticationPrf: 'enabled',
+        });
+      });
+
+      applyUrlPreset();
     </script>
   </body>
 </html>

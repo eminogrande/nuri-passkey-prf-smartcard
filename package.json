@@ -11,6 +11,11 @@
     "fido2:test-prf": "scripts/run-fido2-prf-sim-tests.sh",
     "e2e": "scripts/run-all-e2e.sh",
     "web:prf": "scripts/serve-prf-test.sh",
+    "web:tunnel": "scripts/serve-prf-ngrok.sh",
+    "mobile:android": "scripts/run-expo-nfc-prf-probe.sh android",
+    "mobile:ios": "scripts/run-expo-nfc-prf-probe.sh ios --device",
+    "mobile:start": "scripts/run-expo-nfc-prf-probe.sh start",
+    "mobile:typecheck": "cd mobile/expo-nfc-prf-probe && npm run typecheck",
     "card:build": "scripts/build-fido2-cap.sh",
     "card:install": "scripts/install-fido2-card.sh",
     "card:reinstall": "scripts/reinstall-fido2-card.sh",
@@ -21,7 +26,11 @@
     "card:pin:status": "scripts/manage-fido2-pin.sh status",
     "card:pin:set": "scripts/manage-fido2-pin.sh set",
     "card:pin:change": "scripts/manage-fido2-pin.sh change",
-    "card:pin:verify": "scripts/manage-fido2-pin.sh verify"
+    "card:pin:verify": "scripts/manage-fido2-pin.sh verify",
+    "card:prf:info": "scripts/card-prf-backup.sh info",
+    "card:prf:enroll": "scripts/card-prf-backup.sh enroll",
+    "card:prf:derive": "scripts/card-prf-backup.sh derive",
+    "card:prf:selftest": "scripts/card-prf-backup.sh selftest"
   },
   "dependencies": {
     "@noble/curves": "^1.9.7",

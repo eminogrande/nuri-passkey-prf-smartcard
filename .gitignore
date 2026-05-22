@@ -1,5 +1,7 @@
 node_modules/
 vendor/
+__pycache__/
+*.py[cod]
 .venv/
 venv/
 *.log
@@ -9,9 +11,11 @@ hs_err_pid*.log
 .env.*
 secrets/
 local-secrets/
+.nuri-card-prf/
 *.key
 *.pem
 *.p12
 *.pfx
+*.apk
 SCP03_KEYS.md
 CARD_KEYS.md
