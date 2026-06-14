@@ -1,0 +1,296 @@
+#!/usr/bin/env node
+import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import process from 'node:process';
+import { bech32m } from '@scure/base';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { bytesToHex, hexToBytes } from '@noble/curves/abstract/utils';
+import { SigHash, Transaction } from '@scure/btc-signer';
+
+const PROFILE = process.env.REAL_CARD_COSIGN_PROFILE || '.nuri-card-musig2/browser-real-card.json';
+const REAL_CARD_PYTHON = process.env.REAL_CARD_COSIGN_PYTHON || '/private/tmp/nuri-fido2-real-card-venv/bin/python';
+const REAL_CARD_SCRIPT = process.env.REAL_CARD_COSIGN_SCRIPT || 'scripts/real-card-cosign-proof.py';
+
+const NETWORKS = {
+  signet: {
+    hrp: 'tb',
+    explorer: 'https://mempool.space/signet/api',
+  },
+  testnet4: {
+    hrp: 'tb',
+    explorer: 'https://mempool.space/testnet4/api',
+  },
+  testnet: {
+    hrp: 'tb',
+    explorer: 'https://mempool.space/testnet/api',
+  },
+  regtest: {
+    hrp: 'bcrt',
+    explorer: null,
+  },
+};
+
+function usage() {
+  console.log(`Usage:
+  node scripts/real-bitcoin-card-demo.mjs address [--network=signet|testnet4|testnet|regtest]
+  node scripts/real-bitcoin-card-demo.mjs utxos [--network=signet|testnet4|testnet]
+  node scripts/real-bitcoin-card-demo.mjs spend --network=signet --to=<address|self> [--utxo=<txid:vout:value>] [--fee-sats=500] [--include-unconfirmed] [--broadcast]
+
+Notes:
+  - address/utxos are safe read-only commands.
+  - spend signs with the physical card and builds a real Taproot key-path spend.
+  - spend does not broadcast unless --broadcast is present.
+  - default spend target is self, meaning the same card Taproot address minus fee.`);
+}
+
+function parseArgs(argv) {
+  const [command, ...rest] = argv;
+  const args = {
+    command,
+    network: 'signet',
+    to: 'self',
+    utxo: '',
+    feeSats: 500n,
+    includeUnconfirmed: false,
+    broadcast: false,
+  };
+  for (const arg of rest) {
+    if (arg.startsWith('--network=')) args.network = arg.slice('--network='.length);
+    else if (arg.startsWith('--to=')) args.to = arg.slice('--to='.length);
+    else if (arg.startsWith('--utxo=')) args.utxo = arg.slice('--utxo='.length);
+    else if (arg.startsWith('--fee-sats=')) args.feeSats = BigInt(arg.slice('--fee-sats='.length));
+    else if (arg === '--include-unconfirmed') args.includeUnconfirmed = true;
+    else if (arg === '--broadcast') args.broadcast = true;
+    else if (arg === '--help' || arg === '-h') {
+      usage();
+      process.exit(0);
+    } else {
+      throw new Error(`unknown argument: ${arg}`);
+    }
+  }
+  if (!args.command || !['address', 'utxos', 'spend'].includes(args.command)) {
+    usage();
+    process.exit(args.command ? 1 : 0);
+  }
+  if (!NETWORKS[args.network]) throw new Error(`unknown network: ${args.network}`);
+  return args;
+}
+
+function p2trScript(outputKey32) {
+  if (outputKey32.length !== 32) throw new Error('taproot output key must be 32 bytes');
+  return new Uint8Array([0x51, 0x20, ...outputKey32]);
+}
+
+function p2trAddress(outputKey32, network) {
+  const words = [1, ...bech32m.toWords(outputKey32)];
+  return bech32m.encode(network.hrp, words);
+}
+
+function decodeP2trAddress(address, network) {
+  const decoded = bech32m.decode(address);
+  if (decoded.prefix !== network.hrp) {
+    throw new Error(`address HRP mismatch: expected ${network.hrp}, got ${decoded.prefix}`);
+  }
+  const words = decoded.words;
+  if (words[0] !== 1) throw new Error('only taproot v1 outputs are supported in this demo');
+  const program = Uint8Array.from(bech32m.fromWords(words.slice(1)));
+  if (program.length !== 32) throw new Error('taproot witness program must be 32 bytes');
+  return p2trScript(program);
+}
+
+async function loadProfile() {
+  const profile = JSON.parse(await readFile(PROFILE, 'utf8'));
+  for (const field of ['aggregate_xonly32', 'card_pk33', 'client_pk33', 'client_secret_hex']) {
+    if (!profile[field]) throw new Error(`${PROFILE} missing ${field}; run npm run cosign:web:real-card:selftest first`);
+  }
+  return profile;
+}
+
+function publicIdentity(profile, networkName) {
+  const network = NETWORKS[networkName];
+  const aggregate = hexToBytes(profile.aggregate_xonly32);
+  const script = p2trScript(aggregate);
+  return {
+    network: networkName,
+    card_pk33: profile.card_pk33,
+    client_pk33: profile.client_pk33,
+    aggregate_xonly32: profile.aggregate_xonly32,
+    address: p2trAddress(aggregate, network),
+    scriptPubKey: bytesToHex(script),
+  };
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} returned ${res.status}: ${await res.text()}`);
+  return await res.json();
+}
+
+async function fetchText(url, options) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${url} returned ${res.status}: ${text}`);
+  return text;
+}
+
+async function fetchUtxos(address, networkName) {
+  const network = NETWORKS[networkName];
+  if (!network.explorer) throw new Error(`${networkName} has no configured public explorer`);
+  return await fetchJson(`${network.explorer}/address/${address}/utxo`);
+}
+
+function parseUtxo(spec) {
+  const [txid, voutRaw, valueRaw] = spec.split(':');
+  if (!/^[0-9a-fA-F]{64}$/.test(txid || '')) throw new Error('--utxo txid must be 32-byte hex');
+  const vout = Number(voutRaw);
+  if (!Number.isSafeInteger(vout) || vout < 0) throw new Error('--utxo vout must be a non-negative integer');
+  const value = BigInt(valueRaw);
+  if (value <= 0n) throw new Error('--utxo value must be positive sats');
+  return { txid, vout, value: Number(value) };
+}
+
+function execFileJson(file, args) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, {
+      cwd: process.cwd(),
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`${error.message}\n${stderr || stdout}`.trim()));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (parseError) {
+        reject(new Error(`could not parse JSON from real-card script: ${parseError.message}\n${stdout}\n${stderr}`.trim()));
+      }
+    });
+  });
+}
+
+async function cardSign(profile, msg32) {
+  const result = await execFileJson(REAL_CARD_PYTHON, [
+    REAL_CARD_SCRIPT,
+    '--use-existing-card-key',
+    '--client-secret-hex',
+    profile.client_secret_hex,
+    '--msg32',
+    msg32,
+  ]);
+  if (result.card_pk33 !== profile.card_pk33) throw new Error('card public key changed');
+  if (result.client_pk33 !== profile.client_pk33) throw new Error('client public key changed');
+  if (result.aggregate_xonly32 !== profile.aggregate_xonly32) throw new Error('aggregate public key changed');
+  if (!result.card_partial_verified || !result.final_signature_verified) {
+    throw new Error(`card signature did not verify: ${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
+async function commandAddress(args) {
+  const profile = await loadProfile();
+  console.log(JSON.stringify(publicIdentity(profile, args.network), null, 2));
+}
+
+async function commandUtxos(args) {
+  const profile = await loadProfile();
+  const identity = publicIdentity(profile, args.network);
+  const utxos = await fetchUtxos(identity.address, args.network);
+  console.log(JSON.stringify({ ...identity, utxos }, null, 2));
+}
+
+async function selectUtxo(args, address) {
+  if (args.utxo) return parseUtxo(args.utxo);
+  const utxos = await fetchUtxos(address, args.network);
+  const available = utxos
+    .filter((u) => args.includeUnconfirmed || !u.status || u.status.confirmed || u.status.block_height || u.status.block_hash)
+    .sort((a, b) => b.value - a.value);
+  if (!available.length) {
+    throw new Error(`no ${args.includeUnconfirmed ? '' : 'confirmed '}UTXO found for ${address} on ${args.network}; fund the address first`);
+  }
+  return available[0];
+}
+
+async function commandSpend(args) {
+  const profile = await loadProfile();
+  const network = NETWORKS[args.network];
+  if (!network.explorer && args.broadcast) throw new Error(`${args.network} has no configured broadcaster`);
+  const identity = publicIdentity(profile, args.network);
+  const sourceScript = hexToBytes(identity.scriptPubKey);
+  const utxo = await selectUtxo(args, identity.address);
+  const inputValue = BigInt(utxo.value);
+  if (inputValue <= args.feeSats) {
+    throw new Error(`UTXO ${utxo.txid}:${utxo.vout} value ${inputValue} is <= fee ${args.feeSats}`);
+  }
+  const toAddress = args.to === 'self' ? identity.address : args.to;
+  const destScript = decodeP2trAddress(toAddress, network);
+  const outputValue = inputValue - args.feeSats;
+
+  const tx = new Transaction({ version: 2 });
+  tx.addInput({
+    txid: utxo.txid,
+    index: utxo.vout,
+    witnessUtxo: {
+      amount: inputValue,
+      script: sourceScript,
+    },
+  });
+  tx.addOutput({
+    script: destScript,
+    amount: outputValue,
+  });
+
+  const msg32 = bytesToHex(tx.preimageWitnessV1(0, [sourceScript], SigHash.DEFAULT, [inputValue]));
+  const cardResult = await cardSign(profile, msg32);
+  const finalSig = hexToBytes(cardResult.final_signature64);
+  if (!schnorr.verify(finalSig, hexToBytes(msg32), hexToBytes(profile.aggregate_xonly32))) {
+    throw new Error('local BIP340 verification failed');
+  }
+  tx.updateInput(0, { tapKeySig: finalSig }, true);
+  tx.finalize();
+  const rawTx = tx.hex;
+  const result = {
+    status: 'REAL_BITCOIN_CARD_TX_READY',
+    network: args.network,
+    source_address: identity.address,
+    destination_address: toAddress,
+    utxo: {
+      txid: utxo.txid,
+      vout: utxo.vout,
+      value: Number(inputValue),
+    },
+    fee_sats: Number(args.feeSats),
+    output_sats: Number(outputValue),
+    taproot_sighash32: msg32,
+    card_partial_verified: cardResult.card_partial_verified,
+    final_signature_verified: true,
+    final_signature64: cardResult.final_signature64,
+    txid: tx.id,
+    tx_vsize: tx.vsize,
+    raw_tx_hex: rawTx,
+    broadcasted: false,
+  };
+  if (args.broadcast) {
+    const txid = await fetchText(`${network.explorer}/tx`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: rawTx,
+    });
+    result.broadcasted = true;
+    result.broadcast_txid = txid.trim();
+  }
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.command === 'address') return commandAddress(args);
+  if (args.command === 'utxos') return commandUtxos(args);
+  if (args.command === 'spend') return commandSpend(args);
+  throw new Error(`unhandled command ${args.command}`);
+}
+
+main().catch((error) => {
+  console.error(error?.stack || error?.message || String(error));
+  process.exit(1);
+});

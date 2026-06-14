@@ -436,6 +436,65 @@ The output field `final_signature64` is a valid BIP340 Schnorr signature for
 Taproot sighash for a funded transaction and `final_signature64` must be
 inserted as the Taproot witness signature.
 
+## Real Bitcoin Signet Demo
+
+The current physical-card wallet identity derives this signet Taproot address:
+
+```bash
+npm run bitcoin:card:address
+```
+
+Current address:
+
+```text
+tb1pywzzgk3p7a5zhhkpqn548pm0xpqqfvzl4jylev522glcjy5npc4sckt9fa
+```
+
+It is a key-path Taproot output for the card/client MuSig2 aggregate key:
+
+```text
+aggregate_xonly32 = 2384245a21f7682bdec104e953876f304004b05fac89fcb28a523f8912930e2b
+scriptPubKey      = 51202384245a21f7682bdec104e953876f304004b05fac89fcb28a523f8912930e2b
+```
+
+Check funding:
+
+```bash
+npm run bitcoin:card:utxos
+```
+
+Build and sign a real self-spend transaction after funding:
+
+```bash
+npm run bitcoin:card:spend -- --fee-sats=500
+```
+
+That command does not broadcast. It builds a real Taproot key-path transaction,
+computes the BIP341 sighash, asks the physical card for the MuSig2 partial,
+aggregates the final BIP340 signature, inserts it into the witness, and prints
+`raw_tx_hex`.
+
+For a faucet UTXO that is still unconfirmed:
+
+```bash
+npm run bitcoin:card:spend -- --include-unconfirmed --fee-sats=500
+```
+
+Broadcast is explicit and should only be used after reviewing the printed
+transaction:
+
+```bash
+npm run bitcoin:card:spend -- --include-unconfirmed --fee-sats=500 --broadcast
+```
+
+For local smoke testing only, a dummy UTXO can be passed manually. This proves
+transaction construction and card signing, but it is not broadcastable unless
+the outpoint is real:
+
+```bash
+npm run bitcoin:card:spend -- --utxo=<txid:vout:value> --fee-sats=500
+```
+
 ## Offline Backup PRF CLI
 
 For an offline backup use case, the card can derive a stable 32-byte secret without being a wallet signer. This uses the same WebAuthn PRF mapping as browsers: the user salt is transformed as `SHA-256("WebAuthn PRF\0" || salt)` and sent through CTAP2 `hmac-secret`.
