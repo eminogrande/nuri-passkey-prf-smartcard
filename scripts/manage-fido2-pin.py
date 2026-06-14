@@ -3,6 +3,7 @@ import argparse
 import getpass
 import os
 import sys
+import time
 
 from fido2.ctap import CtapError
 from fido2.ctap2 import Ctap2
@@ -18,9 +19,20 @@ def describe_ctap_error(error: CtapError) -> str:
 
 
 def select_device():
-    devices = list(CtapPcscDevice.list_devices())
+    last_error = None
+    for attempt in range(1, 6):
+        try:
+            devices = list(CtapPcscDevice.list_devices())
+            break
+        except Exception as error:
+            last_error = error
+            if attempt >= 5:
+                raise
+            time.sleep(0.35 * attempt)
     if not devices:
         print("No PC/SC FIDO2 smartcard device found.", file=sys.stderr)
+        if last_error:
+            print(f"Last reader error: {last_error}", file=sys.stderr)
         print("Check reader/card insertion and make sure the FIDO2 applet is installed.", file=sys.stderr)
         return None
 

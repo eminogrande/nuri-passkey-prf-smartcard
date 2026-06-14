@@ -7,6 +7,12 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "musig2:demo": "node src/musig2/card-sim-cli.js",
+    "server:cosigner:software": "node scripts/server-cosigner-smoke.mjs --backend=software",
+    "server:cosigner:card-sim": "node scripts/server-cosigner-smoke.mjs --backend=card-sim",
+    "server:cosigner:apdu-sim": "node scripts/server-cosigner-smoke.mjs --backend=apdu-sim",
+    "cosign:demo": "node scripts/local-card-cosign-server.mjs --selftest",
+    "cosign:web": "node scripts/local-card-cosign-server.mjs",
+    "cli:e2e": "scripts/run-cli-e2e.sh",
     "fido2:prepare": "scripts/prepare-fido2-baseline.sh",
     "fido2:test-prf": "scripts/run-fido2-prf-sim-tests.sh",
     "e2e": "scripts/run-all-e2e.sh",
@@ -30,7 +36,12 @@
     "card:prf:info": "scripts/card-prf-backup.sh info",
     "card:prf:enroll": "scripts/card-prf-backup.sh enroll",
     "card:prf:derive": "scripts/card-prf-backup.sh derive",
-    "card:prf:selftest": "scripts/card-prf-backup.sh selftest"
+    "card:prf:selftest": "scripts/card-prf-backup.sh selftest",
+    "card:ctap:makecred-matrix": "/private/tmp/nuri-fido2-real-card-venv/bin/python scripts/direct-ctap-diagnostics.py makecred-matrix",
+    "card:ctap:makecred-pin": "/private/tmp/nuri-fido2-real-card-venv/bin/python scripts/direct-ctap-diagnostics.py makecred-pin",
+    "card:ctap:makecred-uv": "/private/tmp/nuri-fido2-real-card-venv/bin/python scripts/direct-ctap-diagnostics.py makecred-uv",
+    "card:musig2:install": "scripts/install-musig2-card.sh",
+    "card:musig2:test": "scripts/test-musig2-card.sh"
   },
   "dependencies": {
     "@noble/curves": "^1.9.7",

@@ -55,6 +55,13 @@ The card only needs:
 
 That is the smallest security boundary for a useful hardware co-signer.
 
+For the concrete Nuri Arkade wallet/server integration, see
+[`nuri-arkade-card-cosigner-plan.md`](nuri-arkade-card-cosigner-plan.md). The
+important product constraint is that a card with a different individual pubkey
+does not automatically replace the current server cosigner for existing wallet
+addresses; the wallet policy must either use the card key from the start, share
+the same cosigner key intentionally, or include both server and card paths.
+
 ## Test Strategy
 
 FIDO2:

@@ -1,4 +1,4 @@
-const CACHE = 'nuri-prf-test-v7';
+const CACHE = 'nuri-prf-test-v10';
 const ASSETS = ['/prf-test.html', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {

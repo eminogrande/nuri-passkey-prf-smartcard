@@ -3,8 +3,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="${FIDO2_TEST_VENV:-/tmp/nuri-fido2-real-card-venv}"
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
-REQ_ID="real-card-fido2-2.1.1"
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x /opt/homebrew/bin/python3.13 ]]; then
+    PYTHON_BIN="/opt/homebrew/bin/python3.13"
+  else
+    PYTHON_BIN="$(command -v python3)"
+  fi
+fi
+PY_TAG="$("$PYTHON_BIN" -c 'import sys; print(f"py{sys.version_info.major}{sys.version_info.minor}")')"
+REQ_ID="real-card-fido2-2.1.1-$PY_TAG"
 
 if [[ "${FIDO2_RESET_CONFIRM:-}" != "YES" ]]; then
   echo "Refusing to reset without explicit confirmation." >&2

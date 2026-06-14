@@ -5,10 +5,11 @@ import getpass
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fido2.client import DefaultClientDataCollector, Fido2Client, UserInteraction
+from fido2.client import ClientError, DefaultClientDataCollector, Fido2Client, UserInteraction
 from fido2.cose import ES256
 from fido2.ctap import CtapError
 from fido2.ctap2 import Ctap2
@@ -29,8 +30,10 @@ from fido2.webauthn import (
 
 try:
     from smartcard.Exceptions import CardConnectionException
+    from smartcard.pcsc.PCSCExceptions import EstablishContextException
 except Exception:  # pragma: no cover - only absent when fido2[pcsc] is unavailable
     CardConnectionException = ()
+    EstablishContextException = ()
 
 
 PROFILE_SCHEMA = "nuri-card-prf-profile-v1"
@@ -102,6 +105,20 @@ def prf_enabled(value):
     return ext_value(prf, "enabled") if prf else None
 
 
+def hmac_create_secret_enabled(value):
+    return ext_value(extension_results(value), "hmacCreateSecret")
+
+
+def registration_extensions(mode):
+    if mode == "disabled":
+        return None
+    if mode == "prf":
+        return {"prf": {}}
+    if mode == "hmacCreateSecret":
+        return {"hmacCreateSecret": True}
+    raise ValueError("registration PRF mode must be prf, hmacCreateSecret, or disabled")
+
+
 def prf_outputs(assertion):
     results = getattr(assertion, "client_extension_results", {})
     prf = ext_value(results, "prf")
@@ -124,15 +141,25 @@ def describe_ctap_error(error: CtapError) -> str:
 
 def select_device(args):
     transport = args.transport.strip().lower()
-    if transport == "hid":
-        devices = list(CtapHidDevice.list_devices())
-    elif transport == "pcsc":
-        devices = list(CtapPcscDevice.list_devices())
-    else:
-        raise ValueError("transport must be pcsc or hid")
+    last_error = None
+    for attempt in range(1, 13):
+        try:
+            if transport == "hid":
+                devices = list(CtapHidDevice.list_devices())
+            elif transport == "pcsc":
+                devices = list(CtapPcscDevice.list_devices())
+            else:
+                raise ValueError("transport must be pcsc or hid")
+            break
+        except Exception as error:
+            last_error = error
+            if attempt >= 12:
+                raise
+            time.sleep(0.35 * attempt)
 
     if not devices:
-        raise RuntimeError(f"No {transport.upper()} FIDO2 device found.")
+        detail = f" Last reader error: {last_error}" if last_error else ""
+        raise RuntimeError(f"No {transport.upper()} FIDO2 device found.{detail}")
 
     if args.device_index is None and len(devices) > 1:
         print(f"Multiple {transport.upper()} FIDO2 devices are visible:", file=sys.stderr)
@@ -239,12 +266,13 @@ def command_enroll(args):
 
     device = select_device(args)
     info = Ctap2(device).info
-    if "hmac-secret" not in info.extensions:
+    if args.registration_prf != "disabled" and "hmac-secret" not in info.extensions:
         print("Authenticator does not advertise hmac-secret.", file=sys.stderr)
         return 3
 
     uv = user_verification(args.user_verification)
     rk = resident_key(args.resident_key)
+    extensions = registration_extensions(args.registration_prf)
     client = client_for(args, device, args.origin)
     credential = client.make_credential(
         PublicKeyCredentialCreationOptions(
@@ -265,12 +293,18 @@ def command_enroll(args):
                 resident_key=rk,
                 user_verification=uv,
             ),
-            extensions={"prf": {}},
+            extensions=extensions,
         )
     )
 
-    if prf_enabled(credential) is not True:
+    if args.registration_prf == "prf" and prf_enabled(credential) is not True:
         print("Credential did not report WebAuthn PRF enabled.", file=sys.stderr)
+        return 5
+    if (
+        args.registration_prf == "hmacCreateSecret"
+        and hmac_create_secret_enabled(credential) is not True
+    ):
+        print("Credential did not report hmacCreateSecret enabled.", file=sys.stderr)
         return 5
 
     cred_id = credential_id(credential)
@@ -284,6 +318,7 @@ def command_enroll(args):
         "user_name": args.user_name,
         "resident_key": args.resident_key,
         "user_verification": args.user_verification,
+        "registration_prf": args.registration_prf,
         "credential_id": b64u_encode(cred_id),
         "credential_id_hex": cred_id.hex(),
         "note": "Not secret, but required to derive the same PRF unless the credential is discoverable and recovered separately.",
@@ -294,8 +329,12 @@ def command_enroll(args):
             "profile": str(path),
             "credential_id": profile["credential_id"],
             "credential_id_hex": profile["credential_id_hex"],
-            "prf_enabled": True,
-            "status": "CARD_PRF_PROFILE_ENROLLED",
+            "prf_enabled": prf_enabled(credential),
+            "hmac_create_secret_enabled": hmac_create_secret_enabled(credential),
+            "registration_prf": args.registration_prf,
+            "status": "CARD_FIDO2_PROFILE_ENROLLED_NO_PRF"
+            if args.registration_prf == "disabled"
+            else "CARD_PRF_PROFILE_ENROLLED",
         }
     )
     return 0
@@ -362,21 +401,38 @@ def command_derive(args):
 
 def command_selftest(args):
     path = profile_path(args)
-    if not path.exists():
-        print(f"Profile {path} does not exist; enrolling it first.")
+    if args.force or not path.exists():
+        if args.force and path.exists():
+            print(f"Re-enrolling profile {path} because --force was set.")
+        else:
+            print(f"Profile {path} does not exist; enrolling it first.")
         enroll_args = argparse.Namespace(**vars(args))
-        enroll_args.force = False
+        enroll_args.force = True
         enroll_args.rp_id = args.rp_id
         enroll_args.rp_name = args.rp_name
         enroll_args.origin = args.origin
         enroll_args.user_name = args.user_name
         enroll_args.resident_key = args.resident_key
         enroll_args.user_verification = args.user_verification
+        enroll_args.registration_prf = args.registration_prf
         status = command_enroll(enroll_args)
         if status != 0:
             return status
 
     profile = read_profile(path)
+    if profile.get("registration_prf") == "disabled":
+        print_json(
+            {
+                "profile": str(path),
+                "rp_id": profile["rp_id"],
+                "credential_id": profile["credential_id"],
+                "registration_prf": "disabled",
+                "status": "CARD_FIDO2_CREATE_NO_PRF_OK",
+                "next_step": "Repeat with --registration-prf prf. If that fails, credential creation works but hmac-secret/PRF creation is blocked.",
+            }
+        )
+        return 0
+
     first_salt = args.salt.encode("utf-8")
     first_a, _ = derive_once(args, profile, first_salt, None)
     first_b, _ = derive_once(args, profile, first_salt, None)
@@ -430,6 +486,7 @@ def build_parser():
     enroll.add_argument("--user-name", default="nuri-offline-backup")
     enroll.add_argument("--resident-key", choices=["required", "preferred", "discouraged"], default="required")
     enroll.add_argument("--user-verification", choices=["required", "preferred", "discouraged"], default="discouraged")
+    enroll.add_argument("--registration-prf", choices=["prf", "hmacCreateSecret", "disabled"], default="prf")
     enroll.add_argument("--force", action="store_true")
     enroll.set_defaults(func=command_enroll)
 
@@ -454,6 +511,8 @@ def build_parser():
     selftest.add_argument("--user-name", default="nuri-offline-backup")
     selftest.add_argument("--resident-key", choices=["required", "preferred", "discouraged"], default="required")
     selftest.add_argument("--user-verification", choices=["required", "preferred", "discouraged"], default="discouraged")
+    selftest.add_argument("--registration-prf", choices=["prf", "hmacCreateSecret", "disabled"], default="prf")
+    selftest.add_argument("--force", action="store_true")
     selftest.set_defaults(func=command_selftest)
 
     return parser
@@ -467,9 +526,25 @@ def main():
     except CtapError as error:
         print(f"CTAP error: {describe_ctap_error(error)}", file=sys.stderr)
         return 7
+    except ClientError as error:
+        ctap_error = next((item for item in error.args if isinstance(item, CtapError)), None)
+        if ctap_error:
+            print(f"FIDO2 client error from authenticator: {describe_ctap_error(ctap_error)}", file=sys.stderr)
+            if "OPERATION_DENIED" in describe_ctap_error(ctap_error):
+                print(
+                    "The authenticator refused makeCredential. Test --registration-prf disabled to separate base credential creation from PRF/hmac-secret creation.",
+                    file=sys.stderr,
+                )
+        else:
+            print(f"FIDO2 client error: {error}", file=sys.stderr)
+        return 9
     except CardConnectionException as error:
         print(f"PC/SC card connection error: {error}", file=sys.stderr)
         print("If another command was using the same reader, wait a second and retry.", file=sys.stderr)
+        return 8
+    except EstablishContextException as error:
+        print(f"PC/SC service error: {error}", file=sys.stderr)
+        print("macOS PC/SC service is not accepting a context. Unplug/replug the reader or wait a few seconds and retry.", file=sys.stderr)
         return 8
     except (RuntimeError, ValueError, OSError) as error:
         print(str(error), file=sys.stderr)

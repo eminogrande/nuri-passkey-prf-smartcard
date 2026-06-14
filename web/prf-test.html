@@ -160,6 +160,16 @@
         roaming security keys is platform-dependent. If this page returns PRF with Google Password
         Manager or USB but not NFC, the card still needs the native NFC test app for phone-tap PRF.
       </p>
+      <p class="note">
+        Desktop PC/SC bridge: Chrome on macOS may not expose a USB smartcard reader as a WebAuthn
+        security key. The local bridge buttons below call a localhost helper process, which talks to
+        the real PC/SC card through `python-fido2`.
+      </p>
+      <p class="note">
+        Important: the browser-native passkey buttons and the PC/SC bridge buttons are two separate
+        transports. `Register Browser Passkey` uses only authenticators exposed by Chrome. It does
+        not use the OMNIKEY PC/SC reader.
+      </p>
 
       <section>
         <label for="username">Username</label>
@@ -207,6 +217,7 @@
             <label for="registrationPrf">Registration PRF</label>
             <select id="registrationPrf">
               <option value="enabled" selected>enabled</option>
+              <option value="hmacCreateSecret">hmacCreateSecret</option>
               <option value="disabled">disabled</option>
             </select>
           </div>
@@ -227,11 +238,16 @@
         </div>
 
         <div class="buttons">
-          <button id="register">Register Passkey</button>
-          <button id="authenticate">Authenticate + PRF</button>
+          <button id="register">Register Browser Passkey</button>
+          <button id="authenticate">Authenticate Browser + PRF</button>
           <button id="diagnostics" class="secondary">Diagnostics</button>
           <button id="install" class="secondary" hidden>Install PWA</button>
           <button id="clear" class="secondary">Clear Local Credential</button>
+        </div>
+        <div class="buttons">
+          <button id="pcscInfo" class="secondary">PC/SC Card Info</button>
+          <button id="pcscSelftest" class="secondary">PC/SC PRF Selftest</button>
+          <button id="pcscDerive" class="secondary">PC/SC PRF Derive</button>
         </div>
         <div id="status" class="status"></div>
       </section>
@@ -431,6 +447,8 @@
             Boolean(window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable) &&
             (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(() => false)),
           browserCapabilities: capabilities,
+          transportInterpretation:
+            'Browser WebAuthn can use Chrome-exposed platform, hybrid, USB/NFC/BLE security-key transports. The OMNIKEY CCID/PCSC reader is tested by the PC/SC buttons, not by browser-native registration.',
           savedCredential: saved
             ? {
                 id: saved.id,
@@ -438,6 +456,32 @@
               }
             : null,
         });
+      }
+
+      async function pcscBridge(path, body) {
+        const response = await fetch(path, {
+          method: body ? 'POST' : 'GET',
+          headers: body ? { 'content-type': 'application/json' } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const json = await response.json();
+        if (!response.ok) {
+          throw Object.assign(new Error(json.stderr || json.error || 'PC/SC bridge failed'), {
+            bridgeResult: json,
+          });
+        }
+        return json;
+      }
+
+      function pcscBody() {
+        return {
+          profile: 'browser-bridge',
+          salt: document.querySelector('#salt1').value,
+          secondSalt: document.querySelector('#salt2').value,
+          userVerification: document.querySelector('#userVerification').value,
+          residentKey: document.querySelector('#residentKey').value,
+          registrationPrf: document.querySelector('#registrationPrf').value,
+        };
       }
 
       async function authenticate() {
@@ -564,6 +608,9 @@
         if (registrationPrf === 'disabled') {
           return 'No-PRF diagnostic failed. Android NFC WebAuthn is failing before PRF; next test is native NFC IsoDep or USB security key comparison.';
         }
+        if (navigator.platform.includes('Mac')) {
+          return 'If this is the OMNIKEY/PCSC smartcard reader, use PC/SC Card Info or PC/SC PRF Selftest. Chrome browser-native registration may not enumerate that reader as a security key.';
+        }
         return 'Try Android No-PRF Diagnostic. If that passes, Android NFC WebAuthn works but PRF creation is blocked.';
       }
 
@@ -613,6 +660,57 @@
             message: error.message,
           });
         });
+      });
+
+      document.querySelector('#pcscInfo').addEventListener('click', () => {
+        setStatus('Reading PC/SC card info...');
+        pcscBridge('/api/pcsc/info')
+          .then((result) => {
+            setStatus('PC/SC card info ready.');
+            print('PC/SC card info', result);
+          })
+          .catch((error) => {
+            setStatus('PC/SC card info failed.');
+            print('PC/SC card info error', {
+              name: error.name,
+              message: error.message,
+              bridgeResult: error.bridgeResult || null,
+            });
+          });
+      });
+
+      document.querySelector('#pcscSelftest').addEventListener('click', () => {
+        setStatus('Running PC/SC PRF selftest...');
+        pcscBridge('/api/pcsc/selftest', pcscBody())
+          .then((result) => {
+            setStatus('PC/SC PRF selftest complete.');
+            print('PC/SC PRF selftest', result);
+          })
+          .catch((error) => {
+            setStatus('PC/SC PRF selftest failed.');
+            print('PC/SC PRF selftest error', {
+              name: error.name,
+              message: error.message,
+              bridgeResult: error.bridgeResult || null,
+            });
+          });
+      });
+
+      document.querySelector('#pcscDerive').addEventListener('click', () => {
+        setStatus('Deriving PC/SC PRF output...');
+        pcscBridge('/api/pcsc/derive', pcscBody())
+          .then((result) => {
+            setStatus('PC/SC PRF derive complete.');
+            print('PC/SC PRF derive', result);
+          })
+          .catch((error) => {
+            setStatus('PC/SC PRF derive failed.');
+            print('PC/SC PRF derive error', {
+              name: error.name,
+              message: error.message,
+              bridgeResult: error.bridgeResult || null,
+            });
+          });
       });
 
       document.querySelector('#install').addEventListener('click', async () => {

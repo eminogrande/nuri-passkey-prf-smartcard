@@ -1,8 +1,272 @@
 # Nuri Passkey PRF Smartcard
 
-MIT-licensed flash-and-test package for a small Java Card FIDO2 passkey applet with browser PRF support, plus a separate Taproot/MuSig2 partial-signing simulator.
+MIT-licensed flash-and-test package for a small Java Card FIDO2 passkey applet with browser PRF support, plus a separate Taproot/MuSig2 partial-signing applet/test path.
 
 The core conclusion is simple: browser passkey PRF is not a separate card-side CTAP extension. Browsers expose WebAuthn `prf`, and authenticators implement CTAP2 `hmac-secret`. A viable smartcard applet should therefore implement and advertise `hmac-secret`, keep normal FIDO2 authentication working, and avoid adding a non-standard CTAP `"prf"` string unless a specific client requires it.
+
+## Current State, June 2026
+
+This repo is a working research and test package for three related tracks:
+
+1. **FIDO2 auth + WebAuthn PRF / CTAP2 hmac-secret**
+2. **Feitian FT-JCOS BioCARD fingerprint card qualification**
+3. **Optional Bitcoin Taproot/MuSig2 partial signing**
+
+The first track is the product priority. MuSig2 is deliberately separate so a FIDO2/passkey failure cannot compromise or complicate the Bitcoin signer.
+
+For the Nuri app/server integration target, see
+[`docs/nuri-arkade-card-cosigner-plan.md`](docs/nuri-arkade-card-cosigner-plan.md).
+It maps the current `nuri-expo` + `server-arkade-v4` MuSig2 flow to a card
+cosigner and explains why "server or card" needs an explicit key/policy choice.
+
+For the immediate Chrome, CLI, Android, and card-install order, see
+[`docs/current-test-next-steps.md`](docs/current-test-next-steps.md).
+
+### Can The Nuri Server Signer Be Replaced By The Card?
+
+Yes, for a server-attached HSM-style deployment. The Arkade server would keep
+the existing approval, policy, transaction, and session checks, but the private
+cosigner operation would move from server RAM to the smartcard:
+
+```text
+current:
+  server derives/holds serverPriv -> musig2.nonceGen/sign in process memory
+
+card-backed:
+  server verifies request/policy -> sends APDU to card -> card returns nonce/partial signature
+```
+
+The important MuSig2 constraint is that the cosigner public key is part of the
+aggregate Taproot/MuSig2 key. Therefore a random new card key cannot sign for an
+existing `musig2(client_pubkey, server_pubkey)` wallet.
+
+There are three workable modes:
+
+1. **Demo or migration:** import the same server cosigner key into the card once,
+   then disable software signing for that slot. Existing server-backed wallets
+   can keep working, but the secret existed outside the card during
+   provisioning.
+2. **Clean production:** generate the card cosigner key on-card and create new
+   wallets/policies using `musig2(client_pubkey, card_pubkey)`. The server never
+   sees the private key, but existing addresses need migration.
+3. **Server-or-card policy:** create a new Taproot policy with explicit
+   alternatives, for example server path, card path, and delayed client recovery.
+   This is the most flexible product model, but it is not a drop-in replacement
+   for the current two-key aggregate address.
+
+The current real-card MuSig2 proof shows that a card can produce valid partial
+signatures. The remaining product work is wiring the Arkade server backend to
+PC/SC/APDU, binding nonce state to the exact `@scure/btc-signer` session, and
+verifying every returned partial before aggregation.
+
+### What Is Already Proven
+
+- The repo has passing local MuSig2 compatibility tests against `@scure/btc-signer`.
+- The repo has server-cosigner smoke tests for `software`, `card-sim`, and `apdu-sim` backends. These model the Arkade server calling a card-like signer for nonce generation and partial signatures.
+- The inserted Feitian BioCARD sample now has two selectable custom applets installed side by side:
+  - FIDO2 applet: `A0000006472F0001`
+  - Nuri MuSig2 applet: `4E5552494D554701`
+- The repo has a real browser PRF test page at `web/prf-test.html`.
+- The browser PRF page also has a localhost PC/SC bridge for desktop Chrome testing of the real reader/card outside browser-native WebAuthn.
+- The repo has a PC/SC CLI path for real FIDO2 cards using CTAP2 `hmac-secret`.
+- The repo has a native Android/iOS NFC probe app that talks ISO-DEP directly to the FIDO applet and can request `hmac-secret` without relying on mobile browser WebAuthn routing.
+- A previously flashed clean FIDO2 CAP in this repo passed real-card CLI auth + PRF with marker `REAL_CARD_WEBAUTHN_PRF_OK`.
+- The currently inserted Feitian BioCARD sample was converted from the vendor preloaded FIDO2 applet to the local `dist/FIDO2.cap` applet under the standard FIDO2 PC/SC AID `A0000006472F0001`.
+- The local applet advertises `hmac-secret`, `rk`, `clientPin`, CTAP2.0, CTAP2.1, and PIN/UV protocols 1 and 2 through `npm run card:prf:info`.
+- The same card was then loaded with `../nuri-smartcard-musig2/java-applet/nuri-musig2-v19.cap`. The real-card MuSig2 host test selected AID `4E5552494D554701` and passed `6/6` checks: card info, init/pubkey/nonces, finalize, parity handling, single-signer BIP340/MuSig2 sanity checks, random signatures, and a 3-party simulation with the card as one signer.
+
+Current verification commands that passed in this checkout:
+
+```bash
+npm test
+npm run musig2:demo
+npm run cosign:demo
+npm run cli:e2e
+REAL_CARD=1 npm run cli:e2e
+npm run card:prf:info
+npm run card:test
+npm run card:musig2:test
+```
+
+`npm test` passed all MuSig2 simulator tests. `npm run musig2:demo` produced `verified=true`. `npm run cosign:demo` produced `NURI_CARD_COSIGN_FLOW_OK` with `final_signature_verified=true`. `npm run cli:e2e` passed the software, card-sim, and APDU-sim server-cosigner flow and ended with `CLI_E2E_OK`. `REAL_CARD=1 npm run cli:e2e` additionally passed real PC/SC FIDO2 PRF info + selftest and ended with `CLI_E2E_OK`. `npm run card:test` printed `REAL_CARD_WEBAUTHN_PRF_OK`. `npm run card:musig2:test` passed the real-card MuSig2 Python host suite with `Result: 6/6 tests passed`.
+
+Before reinstalling the local applet, the vendor preloaded FIDO2 instance returned CTAP `0x27 OPERATION_DENIED` for `makeCredential`, even with PRF disabled and with PIN/UV attempts. The working fix was:
+
+```bash
+FIDO2_RESET_CONFIRM=YES npm run card:reset
+gp -r 2 --load dist/FIDO2.cap
+gp -r 2 -f --delete A0000006472F
+gp -r 2 --package A000000647 --applet A0000006472F0001 --create A0000006472F0001
+```
+
+After that, `npm run card:prf:info`, `npm run card:test`, the ngrok PC/SC bridge selftest, and `REAL_CARD=1 npm run cli:e2e` all pass.
+
+The successful MuSig2 real-card install/test sequence was:
+
+```bash
+gp -r 2 --load ../nuri-smartcard-musig2/java-applet/nuri-musig2-v19.cap
+gp -r 2 --package 4E5552494D5547 --applet 4E5552494D554701 --create 4E5552494D554701
+npm run card:musig2:test
+scripts/card-prf-backup.sh selftest --profile after-musig2-install-prf --force --resident-key discouraged --user-verification discouraged --registration-prf prf --salt 'nuri browser prf first input'
+npm run card:test
+```
+
+The MuSig2 CAP/test tool currently come from the local sibling checkout `../nuri-smartcard-musig2`. The wrappers `npm run card:musig2:install` and `npm run card:musig2:test` use that path by default and can be pointed at another CAP/tool with `MUSIG2_CAP=...` and `MUSIG2_TEST_TOOL=...`.
+
+### What We Can Do Now
+
+- **Browser PRF on desktop Chrome:** use `npm run web:prf` and open `http://localhost:8765/prf-test.html`. When sharing the test to phones or another browser, run the fixed ngrok tunnel and use `https://regular-jointly-cheetah.ngrok-free.app/prf-test.html`. This works with authenticators exposed by Chrome WebAuthn, for example platform passkeys or USB/NFC security keys. A PC/SC smartcard in a reader is not automatically visible to Chrome as a WebAuthn roaming authenticator.
+- **Desktop Chrome PC/SC bridge:** the same local page has `PC/SC Card Info`, `PC/SC PRF Selftest`, and `PC/SC PRF Derive` buttons. These call the local Node helper, not browser-native WebAuthn.
+- **Local card-cosign web demo:** use `npm run cosign:web` and open `http://127.0.0.1:8787/cosign-demo.html`. It simulates the final product shape: a card-generated cosigner key, browser-triggered sign request, local cosign server, card partial signature, client partial signature, and one verified aggregate BIP340/MuSig2 signature.
+- **Server-cosigner CLI:** use `npm run server:cosigner:software`, `npm run server:cosigner:card-sim`, `npm run server:cosigner:apdu-sim`, or `npm run cli:e2e`. These prove the Arkade server-side card/HSM boundary and remain useful even now that the standalone real-card MuSig2 applet has passed its own host suite.
+- **Real-card MuSig2 applet:** use `npm run card:musig2:install` to install the local sibling CAP on a sacrificial developer card, then `npm run card:musig2:test` to run the Python APDU suite. The tested applet AID is `4E5552494D554701`.
+- **Real card PRF in CLI:** use `npm run card:prf:info`, `npm run card:prf:enroll`, `npm run card:prf:derive`, and `npm run card:prf:selftest`. Run only one PC/SC command at a time.
+- **Real card PRF on Android native NFC:** use `npm run mobile:android`, then the Expo NFC probe app. This is the cleanest phone-tap path when browser NFC/WebAuthn routing does not return PRF.
+- **Feitian fingerprint enrollment:** use Feitian's manager app, Windows Security Key settings, or the offline sleeve. This enrolls fingerprints into the Feitian biometric stack.
+- **MuSig2 without fingerprint:** continue today with the simulator and, as a separate second phase, a Satochip-derived Java Card applet protected by PIN.
+
+### What We Cannot Claim Yet
+
+- We cannot claim mobile Safari or Android Chrome NFC browser PRF works for this card. The browser path is OS/browser-routed, while the native NFC app talks directly to ISO-DEP.
+- We cannot claim Feitian fingerprint unlock is integrated into our custom Java Card applet yet. Feitian confirmed the API exists, but the SDK/API is NDA-gated.
+- We cannot claim the current MuSig2 Java Card applet is audited or production-ready. We can claim the local v1.9 applet was installed on the current Feitian sample and passed the included real-card MuSig2 APDU suite. A product signer still needs a reviewed key lifecycle, nonce policy, PIN/fingerprint policy, and a final host flow verified against the exact Nuri Arkade `@scure/btc-signer` session.
+- We cannot claim the current real-card MuSig2 v1.9 applet generates its long-term signing key on-card. Its current `INIT` command accepts a 32-byte seed from the host. The new local cosign web/server demo proves the product contract with simulated on-card key generation; the real CAP still needs a `KEYGEN`/key-slot command for the full production claim.
+- We can claim the inserted Feitian sample now enrolls and derives PRF credentials via desktop PC/SC after replacing the vendor FIDO2 applet with the local `dist/FIDO2.cap`.
+- We should not publish local sample GlobalPlatform/SCP keys from old working folders in a public MIT repo. Keep those in local secret notes or a private vault.
+
+## Feitian BioCARD Findings
+
+The local Feitian folder contains:
+
+- `docs/feitian/Datasheet FT_JCOS BioCard E076.pdf`
+- `docs/feitian/Manual FP Card 076.pdf`
+- `docs/feitian/Manual FT-JCOS BioCARD V1.2EN (2209).pdf`
+- `docs/feitian/Datasheet FTSleeve.pdf`
+- `docs/feitian/Gmail - Re_ Inquiry - Fingerprint Card.pdf`
+
+The Feitian datasheet says the FT-JCOS BioCARD is a Java Card fingerprint smartcard with:
+
+- Java Card 3.0.5
+- GlobalPlatform 2.3.1
+- ISO/IEC 7816 and ISO/IEC 14443 Type A
+- 13.56 MHz contactless
+- 300K user NVM and 6K RAM
+- match-on-secure-element fingerprint module
+- RSA 2048, AES, SHA-1, SHA-256, SHA-384, SHA-512, MD5, 3DES, HMAC, and ECC FP_192/FP_224/FP_384 listed
+
+Important crypto caveat: the datasheet does not explicitly list P-256/FP_256, ECDSA P-256, ECDH P-256, or AES-256. Live tests and/or Feitian confirmation are still required for exact Java Card API exposure on a given batch.
+
+The manuals confirm:
+
+- The card has a preloaded FIDO2 applet.
+- A biometric API can be invoked by applets.
+- Fingerprints can be enrolled by mobile NFC, Windows Security Key settings, Bluetooth reader, or offline sleeve.
+- Windows enrollment requires Windows 10 version 1903 or later.
+- FIDO2 PIN must be set before Windows fingerprint setup.
+- FIDO2 PIN length is 4 to 63 characters.
+- The demo maximum is 2 fingerprints.
+- The v1.2/v1.1 manual says the documented enrollment methods are for demonstration purposes.
+
+The Feitian email thread confirms:
+
+- Feitian has FIDO+Fingerprint and EMV/Mastercard+Fingerprint product lines.
+- Feitian said a FIDO2-verified fingerprint card exists.
+- Feitian said the first BioCard samples already had a FIDO2 applet installed.
+- Feitian said newer EMV+FIDO2 BioCard samples still support fingerprint enrollment by sleeve and had remaining space for an additional applet such as a Bitcoin applet.
+- Feitian said FIDO2+Fingerprint has remaining space for other applets.
+- Feitian said custom applets can be loaded/installed, but they need to confirm algorithms.
+- Feitian said a Java applet can use fingerprint APIs, but the applet SDK requires an NDA.
+- Feitian said production with our applet + FIDO2 applet + possibly EMV applet is possible after we have loaded and fully tested our applet on the BioCard and meet MOQ.
+
+Practical conclusion: Feitian is a viable manufacturer path, but a clean fingerprint-gated custom applet requires the Feitian BioCARD fingerprint SDK under NDA. Until then, use FIDO2 PIN/UV or Feitian's preloaded FIDO2 biometric stack, and keep our custom Bitcoin/MuSig2 path PIN-gated.
+
+## Fingerprint Path
+
+There are two separate fingerprint questions:
+
+1. **Can we enroll a fingerprint on the Feitian card?** Yes, according to Feitian docs. Use one of:
+   - Feitian FT-JCOS BioCARD Manager over NFC.
+   - Windows 10/11 Security Key settings: set FIDO2 PIN first, then enroll fingerprint.
+   - Feitian offline sleeve.
+2. **Can our own Java applet use the fingerprint instead of a PIN?** Not yet in this public repo. Feitian says it is possible, but we need the NDA SDK/API.
+
+Recommended immediate flow:
+
+```text
+Card A: keep as Feitian preloaded/reference card.
+Card B: FIDO2 PRF development card, OK to reset/reinstall.
+Card C: future Satochip/MuSig2 development card, OK to reset/reinstall.
+```
+
+Do not mix these roles until every card is physically labeled and its current applets are recorded with `gp -l` and `npm run card:prf:info`.
+
+## Satochip And MuSig2 Status
+
+The upstream Satochip branches were verified on 2026-06-13:
+
+- `musig2-support`: `3aa97fdc32c3fe3afade3cd5eb7cd9d0d4bd197c`, committed 2025-06-16, tagged `v0.15-0.1`, commit message `Increase version to v0.15-0.1: MuSig2 with nonce reuse check (beta)`.
+- `musig2-debug-test`: `e8af0f28818adfea56f98dddc947e7b0ed85c8a0`, committed 2025-05-20, commit message `DEBUG MuSig2 (TESTING ONLY)`.
+- `master`: `8cbaa1d6531df7e20c7a3d47d95766db51d9a136`, committed 2024-06-20.
+
+Use `musig2-support` as the base for product research. Treat `musig2-debug-test` as historical debug code only.
+
+The Satochip `musig2-support` changelog says MuSig2 is experimental and implements the private-key parts of BIP327:
+
+- `NonceGen(sk, pk, aggpk, m, extra_in)`
+- `Sign(secnonce, sk, session_ctx)`
+- encrypted exported secnonce
+- internal randomness in nonce generation
+- nonce reuse protection in `v0.15-0.1`
+- partial signature output `psig`
+
+The applet exposes MuSig2 commands in `CardEdge.java`:
+
+- `INS_MUSIG2_GENERATE_NONCE = 0x7E`
+- `INS_MUSIG2_SIGN_HASH = 0x7F`
+
+The wallet/host still preprocesses part of the session context. That fits our intended architecture: phone/app computes aggregation context and Taproot transaction logic; the card only protects the private key and returns a partial signature.
+
+Local sibling folders:
+
+- `../FIDO2Applet-working-idex` contains an older combined workbench with FIDO2 PRF support notes, IDEX biometric experiments, Satochip tools, and local MuSig2 notes. Its README says WebAuthn PRF is supported via CTAP `hmac-secret`, but CTAP bio-stuff is not implemented.
+- `../nuri-smartcard-musig2` contains the standalone Java Card MuSig2 implementation (`NuriMuSig2v019.java`, CAP, Python tool, Expo NFC app). On 2026-06-14 its `nuri-musig2-v19.cap` was loaded onto the same Feitian sample as the local FIDO2 applet and passed the Python real-card suite. This repo's `src/musig2` simulator is still the minimal scure-compatible server contract; the real applet is the APDU/device proof.
+
+License warning: upstream SatochipApplet is AGPL-3.0. This repo is MIT. Do not copy Satochip Java code into this repo without making an explicit license decision. For a clean MIT product, keep this repo as protocol/test harness and either depend on Satochip separately, get permission, or write a clean-room applet.
+
+## Recommended Next Steps
+
+1. **Stabilize FIDO2 PRF proof again**
+   - Use only one card command at a time.
+   - Run `npm run card:prf:info`.
+   - Run `npm run card:prf:selftest`.
+   - Run `npm run card:test`.
+   - If Python PC/SC reports `Service not available`, unplug/replug the OMNIKEY reader or restart the macOS smartcard services before retesting.
+
+2. **Start Chrome localhost PRF test**
+   - Run `npm run web:prf`.
+   - Open `http://localhost:8765/prf-test.html` in desktop Chrome.
+   - For a shared HTTPS test URL, run `ngrok http --domain=regular-jointly-cheetah.ngrok-free.app 8765` with the auth token supplied from your shell environment, then open `https://regular-jointly-cheetah.ngrok-free.app/prf-test.html`.
+   - Test platform passkey, USB security key, and any browser-visible roaming authenticator.
+   - Do not expect a contact PC/SC card reader alone to appear as a Chrome WebAuthn authenticator.
+
+3. **Fingerprint enrollment demo**
+   - Use the Feitian Manager app or Windows Security Key settings to enroll two fingerprints.
+   - Record which physical card was enrolled.
+   - Re-run `npm run card:prf:info` and note `bioEnroll`, `uv`, `clientPin`, and `uv_modality`.
+
+4. **Ask Feitian for the missing SDK package**
+   - NDA for BioCARD applet fingerprint SDK/API.
+   - Java package/class names or shareable interface.
+   - Sample applet showing fingerprint verify -> allow private-key operation.
+   - GP/SCP keys and install process for the sample batch.
+   - Confirmation of P-256, ECDSA SHA-256, ECDH, AES-256, SHA-256 exposed to Java Card APIs.
+
+5. **MuSig2 product phase**
+   - Keep it separate from FIDO2, even if both applets are on the same card.
+   - Use the now-installed `NuriMuSig2v019` applet as the first real-card APDU proof.
+   - Continue using Satochip `musig2-support` as the reference behavior for nonce reuse protection and BIP327 host/card boundaries.
+   - Add a final Nuri Arkade host test that signs the exact `@scure/btc-signer` session used by `nuri-expo` and `server-arkade-v4`.
+   - Only after that, decide whether to integrate Feitian fingerprint API instead of PIN.
 
 ## What Is In This Repo
 
@@ -10,6 +274,7 @@ The core conclusion is simple: browser passkey PRF is not a separate card-side C
 - A custom end-to-end PRF mapping test: browser-style PRF salts become CTAP2 `hmac-secret` salts, then a discoverable passkey assertion is verified.
 - A small MuSig2 card simulator compatible with `@scure/btc-signer/musig2.js`.
 - An APDU-level MuSig2 transport simulator with nonce replay rejection.
+- Real-card MuSig2 install/test wrappers for the local `../nuri-smartcard-musig2` CAP/tool.
 - A localhost WebAuthn PRF smoke-test page for real browser/passkey testing.
 - A manufacturer-facing card requirements spec.
 
@@ -83,9 +348,71 @@ Android is a separate moving target. Google Play services v26.03 announced CTAP2
 
 Observed Android Chrome NFC result on 2026-05-22: the no-PRF diagnostic still failed with `NotReadableError` after the phone scanned the card. That means this Android browser/device path is failing basic roaming NFC WebAuthn before PRF or PIN policy is relevant. Continue with native NFC ISO-DEP and USB security-key comparison tests.
 
+## Server Cosigner CLI
+
+These scripts model the future server-attached-card/HSM mode. The host keeps
+`@scure/btc-signer` for key aggregation, session construction, partial
+verification, and final signature aggregation. The cosigner backend is the only
+part that owns the cosigner secret and returns `cosigner_pub_nonce66` plus
+`cosigner_partial32`.
+
+```bash
+npm run server:cosigner:software
+npm run server:cosigner:card-sim
+npm run server:cosigner:apdu-sim
+npm run cli:e2e
+```
+
+All three backends should print `SERVER_CARD_COSIGNER_SMOKE_OK` with
+`cosigner_partial_verified=true` and `final_signature_verified=true`.
+
+`REAL_CARD=1 npm run cli:e2e` additionally runs the real PC/SC FIDO2 PRF info
+and selftest path. For the currently inserted Feitian card with the local
+FIDO2 CAP, fresh credential creation and PRF derivation over PC/SC pass.
+
+## Local Card-Cosign Web Demo
+
+Run:
+
+```bash
+npm run cosign:web
+```
+
+Open:
+
+```text
+http://127.0.0.1:8787/cosign-demo.html
+```
+
+Click `Create Valid MuSig2 Signature`. The page calls the local cosign server,
+which uses the same high-level product boundary we want for Arkade:
+
+```text
+browser/client request
+  -> local cosign server
+  -> card backend returns pubkey, nonce, and partial signature
+  -> host verifies card partial
+  -> client partial is aggregated
+  -> final BIP340 signature verifies against aggregate x-only pubkey
+```
+
+The current backend is `simulated-on-card-keygen`: the card object generates its
+own key internally and never returns the private key. The output field
+`final_signature64` is a valid BIP340 Schnorr signature for `msg32` and
+`aggregate_xonly32`. To broadcast Bitcoin, `msg32` must be the real Taproot
+sighash for a funded transaction and `final_signature64` must be inserted as
+the Taproot witness signature.
+
+This is intentionally one step ahead of the real MuSig2 v1.9 applet. The real
+card applet can sign today, but it still initializes its key from a host-provided
+seed. The exact missing production APDU is an on-card `KEYGEN`/key-slot command
+that returns only `card_pubkey33`.
+
 ## Offline Backup PRF CLI
 
 For an offline backup use case, the card can derive a stable 32-byte secret without being a wallet signer. This uses the same WebAuthn PRF mapping as browsers: the user salt is transformed as `SHA-256("WebAuthn PRF\0" || salt)` and sent through CTAP2 `hmac-secret`.
+
+On this macOS workstation the card CLI prefers `/opt/homebrew/bin/python3.13` when available. Homebrew `python3` currently points to Python 3.14, which showed intermittent `pyscard` PC/SC context failures with this reader.
 
 Enroll one credential profile on the card:
 

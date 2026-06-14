@@ -10,7 +10,7 @@ Keep these categories separate during testing:
 | --- | --- | --- |
 | Feitian fingerprint/FIDO2 sample | The card currently being tested by PC/SC and phone NFC. | Active target for FIDO2 PIN, auth, and PRF. Fingerprint integration is not implemented in the clean CAP yet. |
 | J3R150/J3R180/J3R200/J3H145 Java Cards | Blank or unfused JavaCard buy candidates for loading this CAP. | Not the same as the Feitian fingerprint card unless a seller explicitly says so. Need GP/SCP keys and algorithm confirmation. |
-| MuSig2/Satochip work | Optional future second applet/AID for Taproot partial signing. | Out of the current FIDO2-first acceptance path. |
+| MuSig2/Satochip work | Optional second applet/AID for Taproot partial signing. | Installed and tested on the current sample as `4E5552494D554701`; still not audited or fingerprint-gated. |
 
 ## When Keys Are Needed
 
@@ -51,6 +51,14 @@ On 2026-05-20, macOS `system_profiler SPSmartCardsDataType` reported:
 After CTAP reset on the original preinstalled contact sample, direct CTAP `hmac-secret` worked only with `up=false`. Normal user-presence (`up=true`) assertions still failed with CTAP `0x27 OPERATION_DENIED`.
 
 After deleting package `A0000006472F` and reinstalling this repo's clean `dist/FIDO2.cap`, the contact card passed `npm run card:test` with `REAL_CARD_WEBAUTHN_PRF_OK`. The installed package is now `A000000647` version `0.4` with applet `A0000006472F0001`.
+
+After loading `../nuri-smartcard-musig2/java-applet/nuri-musig2-v19.cap`, the same card also has the Nuri MuSig2 applet installed:
+
+- package `4E5552494D5547`, version `1.9`
+- applet `4E5552494D554701`
+- `npm run card:musig2:test` passed with `Result: 6/6 tests passed`
+
+Current MuSig2 caveat: v1.9 signs on the real card, but its `INIT` command imports a 32-byte seed from the host. For the desired production model, add a `KEYGEN` command that creates the long-term cosigner key on-card and returns only the public key.
 
 Current `getInfo` after clean CAP install:
 

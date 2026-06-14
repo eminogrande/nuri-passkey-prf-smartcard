@@ -4,8 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASELINE="${FIDO2_DEST:-$ROOT/vendor/FIDO2Applet-clean}"
 VENV="${FIDO2_TEST_VENV:-/tmp/nuri-fido2-real-card-venv}"
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
-REQ_ID="real-card-fido2-2.1.1"
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x /opt/homebrew/bin/python3.13 ]]; then
+    PYTHON_BIN="/opt/homebrew/bin/python3.13"
+  else
+    PYTHON_BIN="$(command -v python3)"
+  fi
+fi
+PY_TAG="$("$PYTHON_BIN" -c 'import sys; print(f"py{sys.version_info.major}{sys.version_info.minor}")')"
+REQ_ID="real-card-fido2-2.1.1-$PY_TAG"
 
 if [[ ! -d "$BASELINE" ]]; then
   "$ROOT/scripts/prepare-fido2-baseline.sh"
