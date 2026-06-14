@@ -59,7 +59,8 @@ After loading `dist/nuri-musig2-v20-keygen.cap`, the same card also has the Nuri
 - applet-reported version `1.10`, build `KGEN`
 - on-card key generation command `INS_KEYGEN = 0x04`
 - `npm run card:musig2:test` passed with `Result: 6/6 tests passed`
-- `npm run cosign:real-card` passed with `REAL_CARD_COSIGN_FLOW_OK`
+- `npm run cosign:real-card:keygen` passed with `REAL_CARD_COSIGN_FLOW_OK`
+- `npm run cosign:real-card` signs with the existing non-exportable card key
 
 Current MuSig2 status: v1.10/KGEN signs on the real card and creates the long-term cosigner key on-card. The key is non-exportable at the applet API level: the host receives only the compressed public key, nonces, and partial signatures.
 

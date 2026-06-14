@@ -87,9 +87,11 @@ npm run card:prf:info
 npm run card:test
 npm run card:musig2:test
 npm run cosign:real-card
+npm run cosign:real-card:keygen
+npm run cosign:web:real-card:selftest
 ```
 
-`npm test` passed all MuSig2 simulator tests. `npm run musig2:demo` produced `verified=true`. `npm run cosign:demo` produced `NURI_CARD_COSIGN_FLOW_OK` with `final_signature_verified=true`. `npm run cli:e2e` passed the software, card-sim, and APDU-sim server-cosigner flow and ended with `CLI_E2E_OK`. `REAL_CARD=1 npm run cli:e2e` additionally passed real PC/SC FIDO2 PRF info + selftest and ended with `CLI_E2E_OK`. `npm run card:test` printed `REAL_CARD_WEBAUTHN_PRF_OK`. `npm run card:musig2:test` passed the real-card MuSig2 Python host suite with `Result: 6/6 tests passed`. `npm run cosign:real-card` printed `REAL_CARD_COSIGN_FLOW_OK` with `key_origin: on_card_keygen_non_exportable`, `card_partial_verified: true`, and `final_signature_verified: true`.
+`npm test` passed all MuSig2 simulator tests. `npm run musig2:demo` produced `verified=true`. `npm run cosign:demo` produced `NURI_CARD_COSIGN_FLOW_OK` with `final_signature_verified=true`. `npm run cli:e2e` passed the software, card-sim, and APDU-sim server-cosigner flow and ended with `CLI_E2E_OK`. `REAL_CARD=1 npm run cli:e2e` additionally passed real PC/SC FIDO2 PRF info + selftest and ended with `CLI_E2E_OK`. `npm run card:test` printed `REAL_CARD_WEBAUTHN_PRF_OK`. `npm run card:musig2:test` passed the real-card MuSig2 Python host suite with `Result: 6/6 tests passed`. `npm run cosign:real-card:keygen` printed `REAL_CARD_COSIGN_FLOW_OK` with `key_origin: on_card_keygen_non_exportable`, `card_partial_verified: true`, and `final_signature_verified: true`. `npm run cosign:web:real-card:selftest` passed twice: first with `key_origin: on_card_keygen_non_exportable` and then with `key_origin: existing_on_card_non_exportable` while preserving the same `card_pk33` and `aggregate_xonly32`. `npm run cosign:real-card` now signs with the existing card key instead of reprovisioning it.
 
 Before reinstalling the local applet, the vendor preloaded FIDO2 instance returned CTAP `0x27 OPERATION_DENIED` for `makeCredential`, even with PRF disabled and with PIN/UV attempts. The working fix was:
 
@@ -107,7 +109,7 @@ The successful MuSig2 real-card install/test sequence was:
 ```bash
 gp -r 2 --load dist/nuri-musig2-v20-keygen.cap
 gp -r 2 --package 4E5552494D5547 --applet 4E5552494D554701 --create 4E5552494D554701
-npm run cosign:real-card
+npm run cosign:real-card:keygen
 npm run card:musig2:test
 scripts/card-prf-backup.sh selftest --profile after-musig2-install-prf --force --resident-key discouraged --user-verification discouraged --registration-prf prf --salt 'nuri browser prf first input'
 npm run card:test
@@ -119,9 +121,9 @@ The MuSig2 CAP is committed at `dist/nuri-musig2-v20-keygen.cap`. The wrappers `
 
 - **Browser PRF on desktop Chrome:** use `npm run web:prf` and open `http://localhost:8765/prf-test.html`. When sharing the test to phones or another browser, run the fixed ngrok tunnel and use `https://regular-jointly-cheetah.ngrok-free.app/prf-test.html`. This works with authenticators exposed by Chrome WebAuthn, for example platform passkeys or USB/NFC security keys. A PC/SC smartcard in a reader is not automatically visible to Chrome as a WebAuthn roaming authenticator.
 - **Desktop Chrome PC/SC bridge:** the same local page has `PC/SC Card Info`, `PC/SC PRF Selftest`, and `PC/SC PRF Derive` buttons. These call the local Node helper, not browser-native WebAuthn.
-- **Local card-cosign web demo:** use `npm run cosign:web` and open `http://127.0.0.1:8787/cosign-demo.html`. It simulates the final product shape: a card-generated cosigner key, browser-triggered sign request, local cosign server, card partial signature, client partial signature, and one verified aggregate BIP340/MuSig2 signature.
+- **Local card-cosign web demo:** use `npm run cosign:web` for the simulator or `npm run cosign:web:real-card` for the real PC/SC card backend, then open `http://127.0.0.1:8787/cosign-demo.html`. The real-card mode creates `.nuri-card-musig2/browser-real-card.json` on first use, provisions the card key with `INS_KEYGEN`, and then reuses the same non-exportable card key for later browser-triggered signatures.
 - **Server-cosigner CLI:** use `npm run server:cosigner:software`, `npm run server:cosigner:card-sim`, `npm run server:cosigner:apdu-sim`, or `npm run cli:e2e`. These prove the Arkade server-side card/HSM boundary and remain useful even now that the standalone real-card MuSig2 applet has passed its own host suite.
-- **Real-card MuSig2 applet:** use `npm run card:musig2:install` to install `dist/nuri-musig2-v20-keygen.cap` on a sacrificial developer card, then `npm run cosign:real-card` to prove on-card keygen + real card partial + final verified aggregate signature. `npm run card:musig2:test` remains the broader legacy APDU suite. The tested applet AID is `4E5552494D554701`.
+- **Real-card MuSig2 applet:** use `npm run card:musig2:install` to install `dist/nuri-musig2-v20-keygen.cap` on a sacrificial developer card, then `npm run cosign:real-card:keygen` to prove on-card keygen + real card partial + final verified aggregate signature. Use `npm run cosign:real-card` after provisioning to sign with the existing non-exportable card key. `npm run card:musig2:test` remains the broader legacy APDU suite. The tested applet AID is `4E5552494D554701`.
 - **Real card PRF in CLI:** use `npm run card:prf:info`, `npm run card:prf:enroll`, `npm run card:prf:derive`, and `npm run card:prf:selftest`. Run only one PC/SC command at a time.
 - **Real card PRF on Android native NFC:** use `npm run mobile:android`, then the Expo NFC probe app. This is the cleanest phone-tap path when browser NFC/WebAuthn routing does not return PRF.
 - **Feitian fingerprint enrollment:** use Feitian's manager app, Windows Security Key settings, or the offline sleeve. This enrolls fingerprints into the Feitian biometric stack.
@@ -379,6 +381,12 @@ Run:
 npm run cosign:web
 ```
 
+For the physical card backend, run:
+
+```bash
+npm run cosign:web:real-card
+```
+
 Open:
 
 ```text
@@ -397,26 +405,36 @@ browser/client request
   -> final BIP340 signature verifies against aggregate x-only pubkey
 ```
 
-The current backend is `simulated-on-card-keygen`: the card object generates its
-own key internally and never returns the private key. The output field
-`final_signature64` is a valid BIP340 Schnorr signature for `msg32` and
-`aggregate_xonly32`. To broadcast Bitcoin, `msg32` must be the real Taproot
-sighash for a funded transaction and `final_signature64` must be inserted as
-the Taproot witness signature.
+`npm run cosign:web` uses `simulated-on-card-keygen`: the card object generates
+its own key internally and never returns the private key.
 
-The simulator and the real card now prove the same product shape. The real card
-path is:
+`npm run cosign:web:real-card` uses the physical card through the local PC/SC
+reader. On first use it creates `.nuri-card-musig2/browser-real-card.json`,
+runs card-side `INS_KEYGEN`, stores the public wallet identity plus a local
+demo client secret, and returns a verified aggregate BIP340/MuSig2 signature.
+Later requests use `GET_PUBKEY` and fail if the card public key no longer
+matches the saved profile.
+
+For CLI-only physical-card proof, run:
 
 ```bash
 npm run cosign:real-card
+npm run cosign:real-card:keygen
+npm run cosign:web:real-card:selftest
 ```
 
 Expected real-card markers:
 
 - `status: REAL_CARD_COSIGN_FLOW_OK`
-- `key_origin: on_card_keygen_non_exportable`
+- first run: `key_origin: on_card_keygen_non_exportable`
+- later stable-profile runs: `key_origin: existing_on_card_non_exportable`
 - `card_partial_verified: true`
 - `final_signature_verified: true`
+
+The output field `final_signature64` is a valid BIP340 Schnorr signature for
+`msg32` and `aggregate_xonly32`. To broadcast Bitcoin, `msg32` must be the real
+Taproot sighash for a funded transaction and `final_signature64` must be
+inserted as the Taproot witness signature.
 
 ## Offline Backup PRF CLI
 

@@ -33,8 +33,9 @@ Update: 2026-06-14
   `REAL_CARD=1 npm run cli:e2e` now pass with real-card PRF.
 - `npm run card:musig2:test` now passes against the real card with the MuSig2
   Python suite: `Result: 6/6 tests passed`.
-- `npm run cosign:real-card` now passes against the real card with on-card
+- `npm run cosign:real-card:keygen` now passes against the real card with on-card
   keygen and final aggregate BIP340 signature verification.
+- `npm run cosign:real-card` signs with the existing non-exportable card key.
 - `npm run cosign:demo` now proves the intended local card-cosigner product
   boundary in simulation: card-generated key in the backend, local cosign
   server request, card partial signature, client partial signature, and a final
@@ -68,7 +69,7 @@ The successful MuSig2 add-on sequence on the same card was:
 ```bash
 gp -r 2 --load dist/nuri-musig2-v20-keygen.cap
 gp -r 2 --package 4E5552494D5547 --applet 4E5552494D554701 --create 4E5552494D554701
-npm run cosign:real-card
+npm run cosign:real-card:keygen
 npm run card:musig2:test
 scripts/card-prf-backup.sh selftest --profile after-musig2-install-prf --force --resident-key discouraged --user-verification discouraged --registration-prf prf --salt 'nuri browser prf first input'
 npm run card:test
@@ -81,7 +82,7 @@ Observed results:
 - `npm run card:musig2:test` selected the MuSig2 applet and passed card info,
   basic operations, parity handling, single-signer MuSig2, random signatures,
   and multi-party simulation.
-- `npm run cosign:real-card` returned `REAL_CARD_COSIGN_FLOW_OK` with
+- `npm run cosign:real-card:keygen` returned `REAL_CARD_COSIGN_FLOW_OK` with
   `key_origin: on_card_keygen_non_exportable`, `card_partial_verified: true`,
   and `final_signature_verified: true`.
 - The post-install FIDO2 PRF selftest returned `CARD_PRF_STABLE_OK`.
@@ -192,6 +193,12 @@ Run:
 npm run cosign:web
 ```
 
+For the physical card backend:
+
+```bash
+npm run cosign:web:real-card
+```
+
 Open:
 
 ```text
@@ -209,15 +216,23 @@ Expected:
 - `final_signature64` is a valid BIP340 signature over `msg32` for
   `aggregate_xonly32`
 
-The browser demo is still backed by the simulator, but the same product shape is
-now proven on the real card with:
+The browser demo now has two backends. `npm run cosign:web` is the simulator.
+`npm run cosign:web:real-card` calls the physical card over PC/SC from the
+local server. First use creates `.nuri-card-musig2/browser-real-card.json` and
+provisions the card with `INS_KEYGEN`; later calls use the existing
+non-exportable card key and fail if the card public key changes.
+
+The matching CLI proof is:
 
 ```bash
 npm run cosign:real-card
+npm run cosign:real-card:keygen
+npm run cosign:web:real-card:selftest
 ```
 
-That command uses `INS_KEYGEN` on the installed card applet, so the long-term
-cosigner key is generated on-card and never exported.
+`cosign:real-card` signs with the existing card key. `cosign:real-card:keygen`
+explicitly provisions a new on-card key. `cosign:web:real-card:selftest`
+exercises the same real-card backend used by the local browser page.
 
 ## Step 5: Card Installation Work
 

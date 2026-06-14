@@ -12,6 +12,7 @@ hs_err_pid*.log
 secrets/
 local-secrets/
 .nuri-card-prf/
+.nuri-card-musig2/
 *.key
 *.pem
 *.p12

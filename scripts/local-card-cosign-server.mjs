@@ -1,25 +1,31 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { execFile } from 'node:child_process';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { bytesToHex } from '@noble/curves/abstract/utils';
 import { createOnCardGeneratedCard, runCardCosignFlow } from '../src/musig2/cosign-flow.js';
 
 const card = createOnCardGeneratedCard();
+const REAL_CARD_PYTHON = process.env.REAL_CARD_COSIGN_PYTHON || '/private/tmp/nuri-fido2-real-card-venv/bin/python';
+const REAL_CARD_SCRIPT = process.env.REAL_CARD_COSIGN_SCRIPT || 'scripts/real-card-cosign-proof.py';
+const REAL_CARD_PROFILE = process.env.REAL_CARD_COSIGN_PROFILE || '.nuri-card-musig2/browser-real-card.json';
 
 function parseArgs(argv) {
   const args = {
     host: '127.0.0.1',
     port: 8787,
     selftest: false,
+    backend: process.env.COSIGN_BACKEND || 'simulated',
   };
   for (const arg of argv) {
     if (arg === '--selftest') args.selftest = true;
     else if (arg.startsWith('--host=')) args.host = arg.slice('--host='.length);
     else if (arg.startsWith('--port=')) args.port = Number(arg.slice('--port='.length));
+    else if (arg.startsWith('--backend=')) args.backend = arg.slice('--backend='.length);
     else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: node scripts/local-card-cosign-server.mjs [--host=127.0.0.1] [--port=8787] [--selftest]');
+      console.log('Usage: node scripts/local-card-cosign-server.mjs [--host=127.0.0.1] [--port=8787] [--backend=simulated|real-card] [--selftest]');
       process.exit(0);
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -27,6 +33,9 @@ function parseArgs(argv) {
   }
   if (!Number.isInteger(args.port) || args.port <= 0 || args.port > 65535) {
     throw new Error('port must be 1..65535');
+  }
+  if (!['simulated', 'real-card'].includes(args.backend)) {
+    throw new Error('backend must be simulated or real-card');
   }
   return args;
 }
@@ -60,9 +69,10 @@ async function serveStatic(res, path, contentType) {
 function handleInfo(res) {
   json(res, 200, {
     status: 'NURI_CARD_COSIGN_SERVER_READY',
-    backend: 'simulated-on-card-keygen',
-    key_origin: 'card-generated-non-exportable-in-backend',
-    card_pk33: bytesToHex(card.getIndividualPubkey()),
+    backend: args.backend === 'real-card' ? 'real-card-pcsc-apdu' : 'simulated-on-card-keygen',
+    key_origin: args.backend === 'real-card' ? 'on-card-or-existing-non-exportable' : 'card-generated-non-exportable-in-backend',
+    card_pk33: args.backend === 'real-card' ? undefined : bytesToHex(card.getIndividualPubkey()),
+    profile: args.backend === 'real-card' ? REAL_CARD_PROFILE : undefined,
     endpoints: {
       sign: 'POST /api/cosign/sign',
     },
@@ -71,13 +81,100 @@ function handleInfo(res) {
   });
 }
 
+function execFileJson(file, fileArgs) {
+  return new Promise((resolvePromise, reject) => {
+    execFile(file, fileArgs, {
+      cwd: process.cwd(),
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`${error.message}\n${stderr || stdout}`.trim()));
+        return;
+      }
+      try {
+        resolvePromise(JSON.parse(stdout));
+      } catch (parseError) {
+        reject(new Error(`could not parse JSON from real-card script: ${parseError.message}\n${stdout}\n${stderr}`.trim()));
+      }
+    });
+  });
+}
+
+async function loadRealCardProfile() {
+  try {
+    return JSON.parse(await readFile(REAL_CARD_PROFILE, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function saveRealCardProfile(profile) {
+  await mkdir(dirname(resolve(REAL_CARD_PROFILE)), { recursive: true });
+  await writeFile(REAL_CARD_PROFILE, `${JSON.stringify(profile, null, 2)}\n`);
+}
+
+function realCardArgs(body, profile) {
+  const out = [REAL_CARD_SCRIPT];
+  if (body.msg32) out.push('--msg32', String(body.msg32));
+  else out.push('--message', body.message ? String(body.message) : 'nuri real card browser cosign proof');
+  if (profile?.client_secret_hex) out.push('--client-secret-hex', profile.client_secret_hex);
+  if (profile?.card_pk33) out.push('--use-existing-card-key');
+  else out.push('--include-demo-client-secret');
+  return out;
+}
+
+async function handleRealCardSign(body) {
+  const existingProfile = await loadRealCardProfile();
+  const profile = existingProfile || {
+    created_at: new Date().toISOString(),
+    warning: 'Demo-only local browser profile. Production client keys should come from the Nuri client/passkey wallet, not this file.',
+  };
+  const result = await execFileJson(REAL_CARD_PYTHON, realCardArgs(body, profile));
+  if (!result.final_signature_verified || !result.card_partial_verified) {
+    throw new Error(`real-card signature verification failed: ${JSON.stringify(result)}`);
+  }
+  if (existingProfile) {
+    if (result.card_pk33 !== existingProfile.card_pk33) {
+      throw new Error(`real card key changed: expected ${existingProfile.card_pk33}, got ${result.card_pk33}. Delete ${REAL_CARD_PROFILE} only if you intentionally reprovision.`);
+    }
+    if (result.aggregate_xonly32 !== existingProfile.aggregate_xonly32) {
+      throw new Error(`aggregate key changed: expected ${existingProfile.aggregate_xonly32}, got ${result.aggregate_xonly32}`);
+    }
+  } else {
+    if (!result.demo_client_secret32) {
+      throw new Error('real-card provisioning did not return a demo client secret');
+    }
+    await saveRealCardProfile({
+      ...profile,
+      client_secret_hex: result.demo_client_secret32,
+      card_aid: result.card_aid,
+      card_version: result.card_version,
+      card_pk33: result.card_pk33,
+      client_pk33: result.client_pk33,
+      aggregate_xonly32: result.aggregate_xonly32,
+      first_signature64: result.final_signature64,
+    });
+  }
+  const { demo_client_secret32: _demoClientSecret32, ...publicResult } = result;
+  return {
+    ...publicResult,
+    backend: 'real-card-pcsc-apdu',
+    stable_profile: REAL_CARD_PROFILE,
+    profile_created: !existingProfile,
+  };
+}
+
 async function handleSign(req, res) {
   const body = await readJson(req);
-  const result = runCardCosignFlow({
-    card,
-    msg32: body.msg32,
-    message: body.message,
-  });
+  const result = args.backend === 'real-card'
+    ? await handleRealCardSign(body)
+    : runCardCosignFlow({
+      card,
+      msg32: body.msg32,
+      message: body.message,
+    });
   json(res, 200, result);
 }
 
@@ -107,12 +204,19 @@ async function requestHandler(req, res) {
 const args = parseArgs(process.argv.slice(2));
 
 if (args.selftest) {
-  console.log(JSON.stringify(runCardCosignFlow({ card }), null, 2));
+  const result = args.backend === 'real-card'
+    ? await handleRealCardSign({})
+    : runCardCosignFlow({ card });
+  console.log(JSON.stringify(result, null, 2));
   process.exit(0);
 }
 
 const server = createServer(requestHandler);
 server.listen(args.port, args.host, () => {
   console.log(`Nuri card cosign demo server at http://${args.host}:${args.port}/cosign-demo.html`);
-  console.log(`Cosigner card pubkey: ${bytesToHex(card.getIndividualPubkey())}`);
+  if (args.backend === 'real-card') {
+    console.log(`Real-card backend enabled; profile: ${REAL_CARD_PROFILE}`);
+  } else {
+    console.log(`Simulated cosigner card pubkey: ${bytesToHex(card.getIndividualPubkey())}`);
+  }
 });

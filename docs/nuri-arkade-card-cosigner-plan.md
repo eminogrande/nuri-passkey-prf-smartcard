@@ -317,12 +317,12 @@ same Feitian sample:
 ```bash
 gp -r 2 --load dist/nuri-musig2-v20-keygen.cap
 gp -r 2 --package 4E5552494D5547 --applet 4E5552494D554701 --create 4E5552494D554701
-npm run cosign:real-card
+npm run cosign:real-card:keygen
 npm run card:musig2:test
 ```
 
 The applet selected successfully at `4E5552494D554701` and the Python real-card
-suite passed `6/6`. `npm run cosign:real-card` also passed with on-card
+suite passed `6/6`. `npm run cosign:real-card:keygen` also passed with on-card
 long-term key generation and final aggregate BIP340 signature verification.
 That is a real device proof for the standalone APDU signer.
 It is not yet the final Arkade signer backend because the server route still
@@ -334,6 +334,7 @@ There is now also a local HTTP/web proof for the final product shape:
 ```bash
 npm run cosign:demo
 npm run cosign:web
+npm run cosign:web:real-card
 ```
 
 `npm run cosign:demo` returns `NURI_CARD_COSIGN_FLOW_OK` with
@@ -343,9 +344,17 @@ calls a local cosign server and receives a valid aggregate MuSig2/BIP340
 signature. This proof uses `simulated-on-card-keygen`: the backend generates the
 card key internally and returns only pubkey, nonce, and partial signature.
 
-`npm run cosign:real-card` is the matching real-card proof. It uses the
+`npm run cosign:web:real-card` serves the same page with a real PC/SC card
+backend. First use creates `.nuri-card-musig2/browser-real-card.json`, runs
+`INS_KEYGEN` on the card, and saves the public wallet identity plus a local
+demo client secret. Later browser-triggered signatures reuse the existing
+non-exportable card key through `GET_PUBKEY` and fail if the public key no
+longer matches the saved profile.
+
+`npm run cosign:real-card:keygen` is the explicit keygen proof. It uses the
 v1.10/KGEN applet `INS_KEYGEN` command, so the cosigner key is generated inside
-the card and only `card_pubkey33` leaves the card.
+the card and only `card_pubkey33` leaves the card. `npm run cosign:real-card`
+uses the existing non-exportable card key and does not reprovision.
 
 ## Fit With This Repo
 
