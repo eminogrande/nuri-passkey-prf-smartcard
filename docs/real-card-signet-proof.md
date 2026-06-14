@@ -36,7 +36,9 @@ scriptPubKey        = 51202384245a21f7682bdec104e953876f304004b05fac89fcb28a523f
 Explorer links:
 
 - Address: <https://mempool.space/signet/address/tb1pywzzgk3p7a5zhhkpqn548pm0xpqqfvzl4jylev522glcjy5npc4sckt9fa>
-- Confirmed demo transaction: <https://mempool.space/signet/tx/d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38>
+- First confirmed demo transaction: <https://mempool.space/signet/tx/d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38>
+- Live broadcast proof transaction: <https://mempool.space/signet/tx/c85a73fab75f8649852123d1fff336df2f098792554086a290433ce0999c3e81>
+- Sendable report: [`docs/nuri-card-wallet-proof-report.md`](nuri-card-wallet-proof-report.md)
 
 ## Transaction Ledger
 
@@ -47,12 +49,14 @@ input chain can be audited. The card signature proof is the spend transaction.
 | Role | Txid | Block | What To Check |
 | --- | --- | ---: | --- |
 | Faucet funding | `1b7e759fe7f8e9c0bdd0e13867dddafbe44cf130683747eae19c09ac2a989523` | `308801` | `vout 298` pays `204012` sats to the card aggregate Taproot address. |
-| Card co-signed spend | `d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38` | `308802` | `vin 0` spends faucet `vout 298`; witness contains the final Taproot Schnorr signature. |
+| First card co-signed spend | `d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38` | `308802` | `vin 0` spends faucet `vout 298`; witness contains the final Taproot Schnorr signature. |
+| Live broadcast card proof | `c85a73fab75f8649852123d1fff336df2f098792554086a290433ce0999c3e81` | `308804` | `vin 0` spends `d9ecca...:2`; witness contains the new final Taproot Schnorr signature. |
 
 Direct explorer links:
 
 - Funding tx: <https://mempool.space/signet/tx/1b7e759fe7f8e9c0bdd0e13867dddafbe44cf130683747eae19c09ac2a989523>
 - Card spend tx: <https://mempool.space/signet/tx/d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38>
+- Live broadcast proof tx: <https://mempool.space/signet/tx/c85a73fab75f8649852123d1fff336df2f098792554086a290433ce0999c3e81>
 
 Audit commands:
 
@@ -61,6 +65,9 @@ curl -fsS https://mempool.space/signet/api/tx/1b7e759fe7f8e9c0bdd0e13867dddafbe4
 curl -fsS https://mempool.space/signet/api/tx/1b7e759fe7f8e9c0bdd0e13867dddafbe44cf130683747eae19c09ac2a989523/outspend/298
 curl -fsS https://mempool.space/signet/api/tx/d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38/status
 curl -fsS https://mempool.space/signet/api/tx/d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38/hex
+curl -fsS https://mempool.space/signet/api/tx/d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38/outspend/2
+curl -fsS https://mempool.space/signet/api/tx/c85a73fab75f8649852123d1fff336df2f098792554086a290433ce0999c3e81/status
+curl -fsS https://mempool.space/signet/api/tx/c85a73fab75f8649852123d1fff336df2f098792554086a290433ce0999c3e81/hex
 ```
 
 Verified API facts from 2026-06-14:
@@ -87,6 +94,12 @@ card spend status:
   confirmed    = true
   block_height = 308802
   block_hash   = 000000130e5278bfe9045681c1cbc23fe3a23dc78d2d570b271730c7ba84ad29
+
+live broadcast proof status:
+  confirmed    = true
+  block_height = 308804
+  block_hash   = 0000000907df521415ccfb7a1df66f2d45651fff6c0ba7b122a27e2298c957df
+  spent_input   = d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38:2
 ```
 
 ## Confirmed Onchain Demo
@@ -166,11 +179,16 @@ Expected result:
 }
 ```
 
-## Reproduce The Local Card Signing Demo
+## Reproduce The Card Signing Demo
 
-This signs with the physical card but does not broadcast. It is the safe demo
-command to run in front of someone because it proves the real card path without
-spending another UTXO.
+For a real proof, broadcast and wait for confirmation:
+
+```bash
+npm run bitcoin:card:spend -- --amount-sats=1337 --op-return=Nuri.com --fee-sats=500 --broadcast --wait-confirmation --verbose
+```
+
+For a local engineering check only, the same card signing path can be run
+without broadcasting:
 
 ```bash
 npm run bitcoin:card:spend -- --amount-sats=1337 --op-return=Nuri.com --fee-sats=500 --verbose

@@ -26,6 +26,10 @@ For the confirmed real-card Signet transaction, verbose terminal proof commands,
 and Mermaid signing flow, see
 [`docs/real-card-signet-proof.md`](docs/real-card-signet-proof.md).
 
+For a sendable report with online explorer links, transaction ledger, live
+broadcast transcript, and Mermaid diagrams, see
+[`docs/nuri-card-wallet-proof-report.md`](docs/nuri-card-wallet-proof-report.md).
+
 ### Can The Nuri Server Signer Be Replaced By The Card?
 
 Yes, for a server-attached HSM-style deployment. The Arkade server would keep
@@ -79,6 +83,7 @@ verifying every returned partial before aggregation.
 - The local applet advertises `hmac-secret`, `rk`, `clientPin`, CTAP2.0, CTAP2.1, and PIN/UV protocols 1 and 2 through `npm run card:prf:info`.
 - The same card was then loaded with `dist/nuri-musig2-v20-keygen.cap`. The real-card MuSig2 proof selected AID `4E5552494D554701`, generated the cosigner key on-card, returned only `card_pubkey33`, produced a real card partial signature, and verified the final aggregate BIP340/MuSig2 signature.
 - A real Signet Taproot transaction was co-signed by the physical card, broadcast, and confirmed in block `308802`: `d9ecca378bd015f2bd39d3113d3dadc65e6b6f29b72c1d1e6a7d73f246994c38`. It sends `1337` sats, includes `OP_RETURN "Nuri.com"`, returns change to the card aggregate address, and is documented in [`docs/real-card-signet-proof.md`](docs/real-card-signet-proof.md).
+- A second live proof run was co-signed by the physical card, broadcast, and confirmed in block `308804`: `c85a73fab75f8649852123d1fff336df2f098792554086a290433ce0999c3e81`. The full transcript is committed at [`docs/logs/real-card-live-broadcast-proof-2026-06-14.md`](docs/logs/real-card-live-broadcast-proof-2026-06-14.md), and the sendable summary is [`docs/nuri-card-wallet-proof-report.md`](docs/nuri-card-wallet-proof-report.md).
 
 Current verification commands that passed in this checkout:
 
