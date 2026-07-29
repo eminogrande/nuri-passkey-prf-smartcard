@@ -5,6 +5,32 @@ docs. Newest session at top.
 
 ---
 
+## 2026-07-29 — Third backup card + SSH multi-card model confirmed
+
+**Goal:** add a second physical backup card (its own key) to the same set of
+servers the daily card already opens, and document it so the next person can
+repeat it.
+
+**What happened:**
+- Confirmed a FIDO2 card **cannot** be cloned — provisioned a **third
+  independent card** (`nuri-card-2`, `~/.ssh/id_nuri_pcsc_sk_2`) with the
+  standard `ssh-keygen -t ecdsa-sk -w <provider>` flow and authorized its pubkey
+  alongside the existing cards. Live login verified.
+- Learned/By-documented: enrollment is **non-resident** (handle in the key file,
+  nothing written to the card, no PIN prompt), and cards can be told apart only
+  by **which key they sign** (shared AAGUID). Both are now in
+  [`ssh-smartcard.md`](ssh-smartcard.md#adding-a-backup-card).
+
+**State:** three independent cards exist; each logs in on its own key; revoking
+one never affects the others.
+
+**Server-specific rollout (which hosts, which key opens which box) is
+operational data and is intentionally kept OUT of this public repo** — it lives
+in the private operator handoff, not here.
+
+**Next steps:** see the private handoff for the remaining host that still needs
+the card authorized.
+
 ## 2026-07-10 — Expo/web parity incident resolved through Ark broadcast
 
 The Android and desktop flows had drifted. The profile also mixed live card data

@@ -392,6 +392,14 @@ not embedded account or identity defaults.
 Running session notes live in [`docs/logbook.md`](docs/logbook.md); release log in
 [`CHANGELOG.md`](CHANGELOG.md). Headlines:
 
+- **✅ SSH multi-card backup proven with three independent cards (2026-07-29).**
+  A third backup card was provisioned and live-verified with the standard
+  on-card `ssh-keygen -t ecdsa-sk` flow — three distinct non-exportable keys,
+  each authorized independently, none a clone of another. Enrollment is
+  non-resident (nothing written to the card, no PIN prompt). New: a documented
+  way to tell otherwise-identical cards apart. See
+  [Adding a backup card](docs/ssh-smartcard.md#adding-a-backup-card) and the
+  [CHANGELOG](CHANGELOG.md).
 - **✅ Android NFC MuSig2 signing and Ark broadcast are live-proven.** On
   2026-07-10 the inserted card and live Nuri server produced two verified
   partial-signature pairs and two verified aggregate BIP340 signatures. Ark tx

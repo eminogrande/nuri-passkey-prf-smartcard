@@ -269,6 +269,17 @@ This is strictly **stronger** than a clone:
 - A clone means if one is stolen, both are compromised (same key).
 - Two independent keys means a stolen card does not compromise the backup.
 
+The pattern scales to **any number of cards** — a pocket card, a safe card, a
+third off-site card — each with its own key file (`id_nuri_pcsc_sk`,
+`…_backup`, `…_2`, …) and its own line in `authorized_keys`. All of them log in
+independently; revoking one never affects the others.
+
+> **Enrollment is non-resident and non-destructive.** `ssh-keygen -t ecdsa-sk`
+> stores the credential *handle* in the `~/.ssh/…` key file, **not** on the
+> card. Nothing is written to card storage and (because the applet advertises
+> `makeCredUvNotRqd`) **no PIN prompt** appears. Provisioning an extra backup
+> key therefore never overwrites or disturbs anything already on the card.
+
 ### How to set up the backup card
 
 1. **Insert the second card** into the reader.
@@ -289,6 +300,39 @@ This is strictly **stronger** than a clone:
 5. **Store card B safely** (home, safe, etc.). Store the backup key file
    somewhere accessible but it's not secret — it only has the public key +
    credential ID, not the private key.
+
+### Which card is currently in the reader?
+
+All Nuri cards report the same AAGUID (`00000000…`), so `authenticatorGetInfo`
+**cannot** tell them apart. The reliable test is to see which key the inserted
+card can *sign*: offer each candidate public key in turn — the matching card
+signs and logs in, the others fail immediately with `signing failed … invalid
+format` (the credential handle belongs to a different card).
+
+```bash
+PROV=/path/to/nuri-pcsc-sk-provider.so
+for f in id_nuri_pcsc_sk id_nuri_pcsc_sk_backup id_nuri_pcsc_sk_2; do
+  if ssh -i ~/.ssh/$f -o SecurityKeyProvider=$PROV -o IdentitiesOnly=yes \
+        -o BatchMode=yes -o ConnectTimeout=10 root@YOUR_SERVER true 2>/dev/null; then
+    echo "inserted card = $f"; break
+  fi
+done
+```
+
+### Authorize one card across many servers
+
+Adding a card's pubkey to a whole fleet is just an idempotent append per host:
+
+```bash
+KEY=$(cat ~/.ssh/id_nuri_pcsc_sk_2.pub)
+for host in root@server-a root@server-b admin@server-c; do
+  ssh "$host" "grep -qF '$KEY' ~/.ssh/authorized_keys \
+    || echo '$KEY' >> ~/.ssh/authorized_keys"
+done
+```
+
+The `grep -qF … ||` guard makes re-runs safe: a key already present is never
+duplicated.
 
 ### If a card is lost
 

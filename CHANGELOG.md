@@ -3,6 +3,24 @@
 Running release log. For narrative session notes (Q&A, card states, next steps)
 see [`docs/logbook.md`](docs/logbook.md).
 
+## 2026-07-29 — SSH multi-card backup hardened (N independent cards)
+
+- Provisioned and **live-verified a third independent backup card** with the
+  documented `ssh-keygen -t ecdsa-sk -w <provider>` flow, confirming the N-card
+  backup model end to end: three distinct on-card credentials, each its own
+  non-exportable key, all authorized on the same hosts. A card is never a clone
+  of another — losing one and revoking its pubkey leaves the others intact.
+- Documented that on-card SSH enrollment is **non-resident** by default: the
+  credential handle lives in the `~/.ssh/…` key file, **nothing is written to
+  card storage and no PIN prompt is required**, so adding a backup card never
+  disturbs what is already on the card.
+- Added a **"which card is in the reader?"** procedure. All Nuri cards share
+  AAGUID `0000…`, so you cannot tell them apart by info alone — instead offer
+  each candidate pubkey: the matching card signs, the others fail with
+  `invalid format`. See [`docs/ssh-smartcard.md`](docs/ssh-smartcard.md).
+- Added a generic, idempotent **"authorize one card across many servers"**
+  rollout snippet (`grep -q … || echo … >> authorized_keys`).
+
 ## 2026-07-12 — Card V1.0.2 clone-to-proof release
 
 - Added `npm run reproduce:v1`, a single clean-checkout path across source
