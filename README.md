@@ -17,7 +17,7 @@ verifies their server mapping; see the [2026-07-10 incident report](docs/expo-we
 - [Proven on a real card](#proven-on-a-real-card)
 - [**Bitcoin debit card: tap-to-pay Lightning** (the flagship demo)](#bitcoin-debit-card-tap-to-pay-lightning-arkade--nuri)
 - [Expo/web parity incident and fix (2026-07-10)](docs/expo-web-parity-incident-2026-07-10.md)
-- [Status & latest findings](#status--latest-findings-2026-07-10)
+- [Status & latest findings](#status--latest-findings)
 - [How it works](#how-it-works)
 - [Same wallet as the Nuri app (PWA / nuri-expo)](#same-wallet-as-the-nuri-app-pwa-nuri-expo)
 - [Where it sits vs other hardware wallets](#where-it-sits-vs-other-hardware-wallets)
@@ -387,7 +387,10 @@ not embedded account or identity defaults.
 
 ---
 
-## Status & latest findings (2026-07-10)
+## Status & latest findings
+
+_Newest first — latest update 2026-07-29._
+
 
 Running session notes live in [`docs/logbook.md`](docs/logbook.md); release log in
 [`CHANGELOG.md`](CHANGELOG.md). Headlines:
