@@ -13,9 +13,9 @@ Card component.
 | --- | --- | --- | --- | --- | --- |
 | `FIDO2.cap` | `third_party/fido2-applet/` + patch 0001 | `A0000006472F0001` | package 0.4, `up:false` | MIT | `173a6290e7dfb9e55c3c837956345500ca2dcf1b634fabf258e6f51027f7f24d` |
 | `FIDO2-up.cap` | same + patches 0001 and 0002 | `A0000006472F0001` | package 0.4, `up:true` | MIT | `ec670c69f0f47c09526c1744d314f899681d7d935806278d2fbfbd2019f699d9` |
-| `nuri-musig2-v20-keygen.cap` | `card/musig2/` | `4E5552494D554701` | 1.10 / `KGEN` | GPL-2.0-or-later portions | `21a729e20feb506bdcaccd36aa0890bc46c359a2db69d241688f0c600ed29a2b` |
+| `nuri-musig2-v20-keygen.cap` | `card/musig2/` | `4E5552494D554701` | 1.11 / `KGEN` — no host seed import, one-shot KEYGEN | GPL-2.0-or-later portions | `a9b2eea825561f31da708836927290fd92b430c5084cdc614020fd5da3648126` |
 | `nuri-oath-totp.cap` | `card/totp/` | `4E555249544F5450` | package 1.0 | MIT | `6f33f7c4aedea49238d3ac33867999b787972d8cc0c4f4948ad302c5e9ab1af2` |
-| `nuri-eth-signer.cap` | `card/eth/` | `4E55524945544801` | 1.3 / `SIGN` | GPL-2.0-or-later portions | `a47e4618dc15f7487d17a8527d8203e0dc3322ea43a018c56dc8c3c472f4ba41` |
+| `nuri-eth-signer.cap` | `card/eth/` | `4E55524945544801` | 1.4 / `SIGN` — debug INS removed, one-shot KEYGEN | GPL-2.0-or-later portions | `0093e7b2b9c15435fd853ac4e6a64180f0779aa5230e56b652b6b8217d1b5217` |
 
 ## Exact build inputs
 

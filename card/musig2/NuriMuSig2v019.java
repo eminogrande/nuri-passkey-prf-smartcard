@@ -11,17 +11,21 @@ import javacardx.crypto.*;
  * - Use full 96-byte buffer for mod() like Satochip
  * - Copy result from offset+64 for 96-byte buffer
  *
+ * Hardening v1.11 (Coldcard Mk3 entropy advisory, 2026-07):
+ * - INS_INIT (host seed import) REMOVED. Key material can only be born
+ *   on-card via ALG_SECURE_RANDOM; no host bytes ever become the master key.
+ * - KEYGEN is one-shot: a card with a key answers 6989. No silent re-key.
+ *
  * Author: Claude & Emin
  * Date: 2025-08-31
  */
 public class NuriMuSig2v019 extends Applet {
 
-    // Version 1.9 - Fixed 96-byte buffer
-    private static final byte[] APPLET_VERSION = {(byte)0x01, (byte)0x0A};
+    // Version 1.11 - no host seed import, one-shot keygen
+    private static final byte[] APPLET_VERSION = {(byte)0x01, (byte)0x0B};
 
     // Commands
     private static final byte INS_GET_VERSION = (byte)0x01;
-    private static final byte INS_INIT = (byte)0x02;
     private static final byte INS_GET_PUBKEY = (byte)0x03;
     private static final byte INS_KEYGEN = (byte)0x04;
     private static final byte INS_GET_NONCES = (byte)0x40;
@@ -31,8 +35,8 @@ public class NuriMuSig2v019 extends Applet {
     private static final short SW_NONCES_NOT_READY = (short)0x6984;
     private static final short SW_ALREADY_FINALIZED = (short)0x6985;
     private static final short SW_NOT_INITIALIZED = (short)0x6986;
-    private static final short SW_INVALID_SEED = (short)0x6987;
     private static final short SW_INVALID_NONCE = (short)0x6988;
+    private static final short SW_KEY_ALREADY_GENERATED = (short)0x6989;
 
     // Algorithm constants
     private final static byte ALG_EC_SVDP_DH_PLAIN_XY = (byte)0x06;
@@ -91,6 +95,8 @@ public class NuriMuSig2v019 extends Applet {
     private byte[] pubK2;        // 33 bytes compressed K2 = k2·G
     private boolean noncesReady;
     private boolean finalized;
+    // Persistent (EEPROM): once true, KEYGEN is locked forever.
+    private boolean keyGenerated;
 
     // Pre-allocated buffers
     private byte[] tempBuffer;   // 65 bytes for ECDH output
@@ -167,9 +173,6 @@ public class NuriMuSig2v019 extends Applet {
             case INS_GET_VERSION:
                 getVersion(apdu);
                 break;
-            case INS_INIT:
-                initialize(apdu);
-                break;
             case INS_GET_PUBKEY:
                 getPublicKey(apdu);
                 break;
@@ -199,39 +202,12 @@ public class NuriMuSig2v019 extends Applet {
         apdu.setOutgoingAndSend((short)0, (short)7);
     }
 
-    private void initialize(APDU apdu) {
-        byte[] buffer = apdu.getBuffer();
-        short dataLen = apdu.setIncomingAndReceive();
-
-        if (dataLen != 32) {
-            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
-        }
-
-        // Derive master key from seed
-        sha256.reset();
-        sha256.update(buffer, ISO7816.OFFSET_CDATA, (short)32);
-        sha256.doFinal(tempBuffer, (short)0, (short)0, scratch32_1, (short)0);
-
-        // Reduce modulo n
-        BigIntegerMod.reduce(scratch32_1, (short)0, scratch32_1, (short)0);
-
-        // Check for zero
-        if (isZero(scratch32_1, (short)0, (short)32)) {
-            ISOException.throwIt(SW_INVALID_SEED);
-        }
-
-        // Set as private key
-        masterKey.setS(scratch32_1, (short)0, (short)32);
-
-        // Clear state
-        noncesReady = false;
-        finalized = false;
-
-        // Clear scratch
-        Util.arrayFillNonAtomic(scratch32_1, (short)0, (short)32, (byte)0);
-    }
-
     private void keygen(APDU apdu) {
+        // One-shot: the long-term key is born once, on-card, and can never be
+        // replaced or imported. Re-keying = new blank card.
+        if (keyGenerated) {
+            ISOException.throwIt(SW_KEY_ALREADY_GENERATED);
+        }
         byte[] buffer = apdu.getBuffer();
 
         // Generate a non-zero secp256k1 scalar fully on-card.
@@ -266,9 +242,11 @@ public class NuriMuSig2v019 extends Applet {
             );
         }
 
-        // Clear one-shot nonce/session state when replacing the long-term key.
+        // Clear one-shot nonce/session state when installing the long-term key.
         noncesReady = false;
         finalized = false;
+        // Lock keygen forever (persistent). Any throw above leaves it false.
+        keyGenerated = true;
 
         // Return compressed card public key. No private key material leaves card.
         if (outLen == 65 && tempBuffer[0] == 0x04) {

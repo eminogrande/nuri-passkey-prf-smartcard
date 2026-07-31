@@ -207,11 +207,6 @@ class NuriMuSig2Card:
             "build": response[3:7].decode("ascii", errors="ignore"),
         }
 
-    def init_seed(self, seed: bytes):
-        if len(seed) != 32:
-            raise ValueError("seed must be 32 bytes")
-        self.transmit_ok([0x00, 0x02, 0x00, 0x00, 0x20] + list(seed))
-
     def pubkey(self) -> bytes:
         return self.transmit_ok([0x00, 0x03, 0x00, 0x00, 0x00])
 
@@ -260,37 +255,47 @@ def run(args):
     try:
         version = card.version()
 
-        # Prefer real on-card KEYGEN. Keep INIT(seed) as an explicit fallback for
-        # old v1.9 applets only; production should use KEYGEN. For stable wallet
-        # tests, --use-existing-card-key signs with the current non-exportable
-        # key that was already provisioned on-card.
-        use_init_seed = args.use_init_seed
+        # Key provisioning: on-card KEYGEN only. Applet 1.11 removed INIT(seed)
+        # host import and made KEYGEN one-shot (SW 6989 once a key exists).
+        # On an already-keyed card we sign with the existing non-exportable key.
         use_existing_card_key = args.use_existing_card_key
         card_pubkey = None
         client_secret = None
         client_point = None
         coeffs = None
         aggregate = None
+        key_origin = None
 
         if use_existing_card_key:
             card_pubkey = card.pubkey()
             if len(card_pubkey) != 33:
                 raise RuntimeError(f"unexpected existing card pubkey length: {len(card_pubkey)}")
-            if card_pubkey[0] != 0x02:
-                raise RuntimeError("existing card key is not even-y; reprovision with KEYGEN")
-        elif use_init_seed:
-            for _ in range(128):
-                card.init_seed(secrets.token_bytes(32))
-                candidate_card_pubkey = card.pubkey()
-                if candidate_card_pubkey[0] == 0x02:
-                    card_pubkey = candidate_card_pubkey
-                    break
-            if card_pubkey is None:
-                raise RuntimeError("could not provision even-y card key through INIT(seed)")
+            key_origin = "existing_on_card_non_exportable"
         else:
-            card_pubkey = card.keygen()
-            if card_pubkey[0] != 0x02:
-                raise RuntimeError("KEYGEN did not return an even-y compressed public key")
+            try:
+                card_pubkey = card.keygen()
+                key_origin = "on_card_keygen_non_exportable"
+            except RuntimeError as error:
+                if "SW=6989" not in str(error):
+                    raise
+                card_pubkey = card.pubkey()
+                key_origin = "existing_on_card_non_exportable_one_shot"
+        if card_pubkey[0] != 0x02:
+            raise RuntimeError("card key is not even-y; reprovision on a blank card")
+
+        # RNG health check (Coldcard Mk3 lesson: TRNG code being present does
+        # not prove the TRNG is what actually runs — verify behavior). Four
+        # independent on-card nonce draws must be unique, valid compressed
+        # secp256k1 points. Runs before every proof, fails closed.
+        rng_draws = []
+        for _ in range(2):
+            pub_k1, pub_k2 = card.nonces()
+            rng_draws.extend([pub_k1, pub_k2])
+        for draw in rng_draws:
+            if len(draw) != 33 or draw[0] not in (0x02, 0x03):
+                raise RuntimeError("RNG health check failed: malformed nonce point")
+        if len(set(rng_draws)) != 4:
+            raise RuntimeError("RNG health check failed: repeated nonce draws")
 
         client_secret_source = "random_demo_client_secret"
         if args.client_secret_hex:
@@ -317,24 +322,9 @@ def run(args):
                     aggregate = candidate_aggregate
                     break
         if client_secret is None:
-            if use_init_seed or use_existing_card_key:
-                raise RuntimeError("could not find even-y aggregate proof keys after retries")
-            # A new card key is cheap in this test applet; retry the full keygen
-            # once more if client-only retries did not produce even aggregate.
-            card_pubkey = card.keygen()
-            if card_pubkey[0] != 0x02:
-                raise RuntimeError("KEYGEN retry did not return an even-y compressed public key")
-            for _ in range(128):
-                candidate_client_secret, candidate_client_point = random_secret_even_y()
-                candidate_client_pubkey = compress_point(candidate_client_point)
-                candidate_coeffs, candidate_aggregate = key_agg_coefficients([candidate_client_pubkey, card_pubkey])
-                if candidate_aggregate and candidate_aggregate[1] % 2 == 0:
-                    client_secret = candidate_client_secret
-                    client_point = candidate_client_point
-                    coeffs = candidate_coeffs
-                    aggregate = candidate_aggregate
-                    break
-        if client_secret is None:
+            # KEYGEN is one-shot; the card key cannot change. Odd aggregate is
+            # only a client-side pick issue, and 128 retries miss with
+            # probability 2^-128.
             raise RuntimeError("could not find even-y aggregate proof keys after retries")
 
         client_pubkey = compress_point(client_point)
@@ -384,23 +374,15 @@ def run(args):
                 "real-nuri-musig2-v20-existing-key-apdu"
                 if use_existing_card_key
                 else "real-nuri-musig2-v20-keygen-apdu"
-                if not use_init_seed
-                else "real-nuri-musig2-legacy-init-apdu"
             ),
             "card_aid": APPLET_AID.hex().upper(),
             "reader": card.reader,
             "card_version": version,
-            "key_origin": (
-                "existing_on_card_non_exportable"
-                if use_existing_card_key
-                else "host_seed_imported_into_real_card_current_v19_applet"
-                if use_init_seed
-                else "on_card_keygen_non_exportable"
-            ),
+            "key_origin": key_origin,
             "client_secret_source": client_secret_source,
             "demo_client_secret32": bytes_from_int(client_secret).hex() if args.include_demo_client_secret else None,
-            "production_keygen_supported_by_current_applet": not use_init_seed,
-            "keygen_gap": "Using explicit legacy INIT(seed) fallback." if use_init_seed else None,
+            "production_keygen_supported_by_current_applet": True,
+            "keygen_gap": None,
             "msg32": msg32.hex(),
             "client_pk33": client_pubkey.hex(),
             "card_pk33": card_pubkey.hex(),
@@ -428,7 +410,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--message", default="nuri real card cosign proof")
     parser.add_argument("--msg32", default="")
-    parser.add_argument("--use-init-seed", action="store_true", help="legacy fallback for pre-KEYGEN applets")
     parser.add_argument("--use-existing-card-key", action="store_true", help="sign with the current non-exportable card key instead of running KEYGEN")
     parser.add_argument("--client-secret-hex", default="", help="demo-only client secret for stable aggregate-key tests")
     parser.add_argument("--include-demo-client-secret", action="store_true", help="include the generated demo client secret in JSON output for local profile provisioning")

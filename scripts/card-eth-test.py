@@ -14,6 +14,7 @@ from smartcard.System import readers
 from smartcard.CardConnection import CardConnection
 
 APPLET_AID = bytes.fromhex("4E55524945544801")
+MUSIG2_AID = bytes.fromhex("4E5552494D53554701")
 
 def transmit(conn, apdu_bytes):
     res = conn.transmit(list(apdu_bytes))
@@ -24,11 +25,43 @@ def transmit(conn, apdu_bytes):
     return bytes(data)
 
 def select(conn):
-    apdu = bytes([0x00, 0xA4, 0x04, 0x00, len(APPLET_AID)]) + APPLET_AID
+    return select_aid(conn, APPLET_AID)
+
+def select_aid(conn, aid):
+    apdu = bytes([0x00, 0xA4, 0x04, 0x00, len(aid)]) + aid
     return transmit(conn, apdu)
 
 def get_version(conn):
     return transmit(conn, bytes([0x00, 0x01, 0x00, 0x00, 0x00]))
+
+def raw_sw(conn, apdu_bytes):
+    data, sw1, sw2 = conn.transmit(list(apdu_bytes))
+    return bytes(data), (sw1 << 8) | sw2
+
+def musig2_rng_health_check(conn):
+    """Coldcard Mk3 lesson: TRNG code present in the binary does not prove the
+    TRNG is what actually runs — verify behavior on the physical card. Four
+    independent MuSig2 nonce draws must be unique valid compressed points,
+    and INS_INIT (0x02, removed in applet 1.11) must be rejected. Fails closed."""
+    try:
+        select_aid(conn, MUSIG2_AID)
+    except RuntimeError:
+        print("MuSig2 applet not present; skipping RNG health check")
+        return
+    _, sw = raw_sw(conn, bytes([0x00, 0x02, 0x00, 0x00, 0x20]) + bytes(32))
+    if sw == 0x9000:
+        raise SystemExit("INS_INIT accepted — old applet with host seed import. Flash 1.11 before production.")
+    seen = set()
+    for _ in range(2):
+        resp = transmit(conn, bytes([0x00, 0x40, 0x00, 0x00, 0x00]))
+        for off in (0, 33):
+            point = resp[off:off + 33]
+            if point[0] not in (0x02, 0x03):
+                raise SystemExit(f"RNG health check FAILED: malformed nonce point {point.hex()}")
+            if point in seen:
+                raise SystemExit("RNG health check FAILED: repeated nonce draw — on-card RNG not trusted")
+            seen.add(point)
+    print("RNG health check: 4 unique on-card nonce draws, INS_INIT rejected")
 
 def keygen(conn):
     return transmit(conn, bytes([0x00, 0x03, 0x00, 0x00, 0x00]))
@@ -82,7 +115,7 @@ def main():
     print(f"Version: {ver[0]}.{ver[1]}, build: {ver[3:7].decode()}")
 
     if args.regenerate:
-        print("\n=== KEYGEN (DESTRUCTIVE) ===")
+        print("\n=== KEYGEN (one-shot, blank cards only) ===")
         pubkey33 = keygen(conn)
     else:
         print("\n=== EXISTING KEY ===")
@@ -90,8 +123,15 @@ def main():
             pubkey33 = get_pubkey(conn)
         except RuntimeError as error:
             raise SystemExit(
-                f"No existing ETH key. Run once with --regenerate on a new/test card: {error}"
+                f"No existing ETH key. Run once with --regenerate on a blank card: {error}"
             ) from error
+        # Applet 1.4: KEYGEN is one-shot. A keyed card must answer 6989.
+        _, sw = raw_sw(conn, bytes([0x00, 0x03, 0x00, 0x00, 0x00]))
+        if sw == 0x9000:
+            raise SystemExit("KEYGEN succeeded on a keyed card — one-shot guard missing. Flash eth applet 1.4.")
+        if sw != 0x6989:
+            raise SystemExit(f"KEYGEN on keyed card returned SW={sw:04X}, expected 6989")
+        print("One-shot KEYGEN guard: OK (SW=6989)")
     print(f"Compressed pubkey: {pubkey33.hex()}")
 
     # Derive Ethereum address (host-side keccak256)
@@ -211,6 +251,9 @@ def main():
             print(f"  recovered:{recovered_pub.hex()}")
     else:
         print("\n❌ ECDSA recovery failed (point at infinity)")
+
+    print("\n=== MUSIG2 RNG HEALTH CHECK ===")
+    musig2_rng_health_check(conn)
 
     conn.disconnect()
     print("\n=== DONE ===")
