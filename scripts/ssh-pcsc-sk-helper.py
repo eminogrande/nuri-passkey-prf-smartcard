@@ -25,6 +25,20 @@ def fail(code, message):
     return 1
 
 
+def _connect_with_t0_fallback(self):
+    # Some readers (e.g. Realtek 0bda:0165) leave this card "unresponsive" under
+    # auto protocol; T=0 works. Try the default first, then force T=0.
+    from smartcard.CardConnection import CardConnection
+    try:
+        self._conn.connect()
+    except Exception:
+        self._conn.connect(CardConnection.T0_protocol)
+    self._select()
+
+
+CtapPcscDevice.connect = _connect_with_t0_fallback
+
+
 def device():
     devices = list(CtapPcscDevice.list_devices())
     if not devices:

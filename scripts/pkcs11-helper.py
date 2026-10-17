@@ -59,10 +59,18 @@ def card_select(conn, aid_hex):
         raise RuntimeError(f"SELECT {aid_hex} failed: SW={sw:04X}")
     return True
 
+def card_tx(conn, apdu):
+    data, sw1, sw2 = conn.transmit(apdu)
+    if sw1 == 0x6C:  # wrong Le: resend with the length the card asked for
+        data, sw1, sw2 = conn.transmit(apdu[:4] + [sw2])
+    if sw1 == 0x61:  # T=0: response waiting, fetch with GET RESPONSE
+        data, sw1, sw2 = conn.transmit([0x00, 0xC0, 0x00, 0x00, sw2])
+    return data, sw1, sw2
+
 def card_sign(conn, hash_hex):
     h = bytes.fromhex(hash_hex)
     apdu = [0x00, 0x04, 0x00, 0x00, 0x20] + list(h)
-    data, sw1, sw2 = conn.transmit(apdu)
+    data, sw1, sw2 = card_tx(conn, apdu)
     sw = (sw1 << 8) | sw2
     if sw != 0x9000:
         raise RuntimeError(f"SIGN failed: SW={sw:04X}")
@@ -70,7 +78,7 @@ def card_sign(conn, hash_hex):
     return sig[:64].hex(), sig[64]
 
 def card_pubkey(conn):
-    data, sw1, sw2 = conn.transmit([0x00, 0x02, 0x00, 0x00, 0x00])
+    data, sw1, sw2 = card_tx(conn, [0x00, 0x02, 0x00, 0x00, 0x00])
     sw = (sw1 << 8) | sw2
     if sw != 0x9000:
         raise RuntimeError(f"GET_PUBKEY failed: SW={sw:04X}")

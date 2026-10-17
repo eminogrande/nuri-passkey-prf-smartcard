@@ -289,7 +289,10 @@ static char *run_helper(const char *input) {
     char *python3 = python_path(), *helper3 = helper_path();
     char *pq = shell_quote(python3), *hq = shell_quote(helper3);
     char *run_cmd = NULL;
-    asprintf(&run_cmd, "%s %s --sim < %s", pq, hq, tmp_in);
+    /* NURI_PKCS11_MODE=card talks to the real card; default stays --sim for tests. */
+    const char *mode = getenv("NURI_PKCS11_MODE");
+    const char *flag = (mode && strcmp(mode, "card") == 0) ? "--card" : "--sim";
+    asprintf(&run_cmd, "%s %s %s < %s", pq, hq, flag, tmp_in);
     free(pq); free(hq); free(python3); free(helper3);
 
     FILE *fp = popen(run_cmd, "r");
