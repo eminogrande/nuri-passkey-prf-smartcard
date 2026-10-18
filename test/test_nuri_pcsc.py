@@ -1,0 +1,455 @@
+#!/usr/bin/env python3
+"""Fake-reader tests for scripts/nuri_pcsc.py (no pyscard, no hardware).
+
+Run from any cwd:  python3 -m unittest test/test_nuri_pcsc.py
+Fakes model the two readers the parent measured on the real card:
+  * OMNIKEY 5422: default connect works, T=1 transport, plain 9000 answers
+  * Realtek 0bda:0165: default connect -> "unresponsive" (0x80100066),
+    T=1 -> "protocol mismatch" (0x8010000F), T=0 works and answers
+    61XX (GET RESPONSE) and 6CXX (resend with Le=XX)
+"""
+from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+import types
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import nuri_pcsc  # noqa: E402
+
+ETH_AID = "4E55524945544801"
+FIDO_AID = "A0000006472F0001"
+T0 = 0x00000001
+T1 = 0x00000002
+
+SELECT_ETH = list(bytes.fromhex("00A4040008" + ETH_AID))
+VERSION = [0x80, 0x01, 0x00, 0x00, 0x00]
+PUBKEY = [0x80, 0x02, 0x00, 0x00, 0x00]
+SIGN = [0x80, 0x04, 0x00, 0x00, 0x20] + [0x11] * 32
+VERSION_RESP = [0x01, 0x03, 0x01] + list(b"ETH1")
+PUBKEY_RESP = list(bytes.fromhex("031f0f76cf2da4d2c679130f1accfb1e3b149c20ea15291a49b643e350cc63c4b1"))
+SIG_RESP = list(range(65))
+
+
+class ConnectError(Exception):
+    def __init__(self, message, hresult):
+        super().__init__(message)
+        self.hresult = hresult
+
+
+class NoCardException(Exception):  # same class name pyscard uses
+    def __init__(self, message, hresult=0x8010000C):
+        super().__init__(message)
+        self.hresult = hresult
+
+
+class FakeCard:
+    """A card image: AIDs present, behaviour on T=0 vs T=1."""
+
+    def __init__(self, aids=(ETH_AID, FIDO_AID)):
+        self.aids = {a.upper() for a in aids}
+
+    def answer(self, apdu, protocol):
+        """Return (data, sw1, sw2) for one raw APDU the way the real card does."""
+        if apdu[:4] == [0x00, 0xA4, 0x04, 0x00]:
+            aid = bytes(apdu[5:5 + apdu[4]]).hex().upper()
+            return ([], 0x90, 0x00) if aid in self.aids else ([], 0x6A, 0x82)
+        if apdu[:4] == [0x80, 0x01, 0x00, 0x00]:
+            return self._case2(apdu, VERSION_RESP, protocol)
+        if apdu[:4] == [0x80, 0x02, 0x00, 0x00]:
+            return self._case2(apdu, PUBKEY_RESP, protocol)
+        if apdu[:5] == [0x80, 0x04, 0x00, 0x00, 0x20]:
+            if protocol == T0:
+                return [], 0x61, 0x41
+            return SIG_RESP, 0x90, 0x00
+        return [], 0x6D, 0x00
+
+    @staticmethod
+    def _case2(apdu, resp, protocol):
+        le = apdu[4]
+        if protocol == T0 and le != len(resp):
+            return [], 0x6C, len(resp)
+        return list(resp), 0x90, 0x00
+
+
+class FakeConnection:
+    def __init__(self, reader):
+        self.reader = reader
+        self.protocol = None
+        self.connected = False
+        self.log = []
+        self.pending = None  # response waiting for GET RESPONSE on T=0
+
+    def connect(self, protocol=None):
+        self.reader.connect_calls.append(protocol)
+        if self.reader.card is None:
+            raise NoCardException("Unable to connect")
+        error = self.reader.connect_errors.get(protocol)
+        if error is not None:
+            raise ConnectError(*error)
+        self.protocol = protocol if protocol is not None else self.reader.default_protocol
+        self.connected = True
+
+    def disconnect(self):
+        self.connected = False
+        self.reader.disconnects += 1
+
+    def getATR(self):
+        return list(self.reader.atr)
+
+    def transmit(self, apdu, protocol=None):
+        if not self.connected:
+            raise ConnectError("not connected", 0x80100067)
+        apdu = list(apdu)
+        self.log.append(apdu)
+        if apdu[:4] == [0x00, 0xC0, 0x00, 0x00]:
+            if self.pending is None:
+                return [], 0x6F, 0x00
+            data, self.pending = self.pending, None
+            return data, 0x90, 0x00
+        data, sw1, sw2 = self.reader.card.answer(apdu, self.protocol)
+        if sw1 == 0x61:
+            self.pending = SIG_RESP
+        return data, sw1, sw2
+
+
+class FakeReader:
+    def __init__(self, name, card, connect_errors=None, default_protocol=T1, atr=b"\x3b\x11\x95\x80"):
+        self.name = name
+        self.card = card
+        self.connect_errors = connect_errors or {}
+        self.default_protocol = default_protocol
+        self.atr = atr
+        self.connect_calls = []
+        self.disconnects = 0
+        self.connections = []
+
+    def createConnection(self):
+        conn = FakeConnection(self)
+        self.connections.append(conn)
+        return conn
+
+    def __str__(self):
+        return self.name
+
+
+_DEFAULT_CARD = object()  # sentinel: card=None means "reader slot is empty"
+
+
+def omnikey(card=_DEFAULT_CARD, name="HID Global OMNIKEY 5422CL Smartcard Reader"):
+    return FakeReader(name, FakeCard() if card is _DEFAULT_CARD else card, default_protocol=T1)
+
+
+def realtek(card=_DEFAULT_CARD, name="Generic Smart Card Reader Interface"):
+    """Measured: default -> 0x80100066 unresponsive, T=1 -> 0x8010000F protocol mismatch, T=0 works."""
+    return FakeReader(
+        name,
+        FakeCard() if card is _DEFAULT_CARD else card,
+        connect_errors={
+            None: ("Unable to connect with protocol: T0 or T1. Card is unresponsive", 0x80100066),
+            T1: ("Unable to connect with protocol: T1. Card protocol mismatch", 0x8010000F),
+        },
+        default_protocol=T0,
+    )
+
+
+class PcscTestCase(unittest.TestCase):
+    def setUp(self):
+        self._orig_list = nuri_pcsc._list_readers
+        self._env = {k: os.environ.pop(k) for k in ("NURI_READER", "NURI_PCSC_PROTOCOL") if k in os.environ}
+
+    def tearDown(self):
+        nuri_pcsc._list_readers = self._orig_list
+        for key in ("NURI_READER", "NURI_PCSC_PROTOCOL"):
+            os.environ.pop(key, None)
+        os.environ.update(self._env)
+
+    def use(self, *readers):
+        nuri_pcsc._list_readers = lambda: list(readers)
+        return readers
+
+
+class OpenAppletTests(PcscTestCase):
+    def test_omnikey_default_connect_works_first_try(self):
+        (rdr,) = self.use(omnikey())
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(applet.protocol, "default")
+        self.assertEqual(applet.reader_name, str(rdr))
+        self.assertEqual(rdr.connect_calls, [None])
+        self.assertEqual(applet.conn.log, [SELECT_ETH])
+        data, sw = applet.transmit(bytes(VERSION))
+        self.assertEqual((data, sw), (bytes(VERSION_RESP), 0x9000))
+        applet.close()
+        self.assertEqual(rdr.disconnects, 1)
+
+    def test_realtek_falls_back_to_t0(self):
+        (rdr,) = self.use(realtek())
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(applet.protocol, "T0")
+        self.assertEqual(rdr.connect_calls, [None, T0])  # T1 never tried once T0 worked
+        self.assertEqual(rdr.disconnects, 0)
+
+    def test_realtek_t0_6cxx_resend_and_61xx_get_response(self):
+        self.use(realtek())
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        data, sw = applet.transmit(bytes(VERSION))
+        self.assertEqual((data, sw), (bytes(VERSION_RESP), 0x9000))
+        self.assertEqual(applet.conn.log[-2:], [VERSION, [0x80, 0x01, 0x00, 0x00, 0x07]])
+        data, sw = applet.transmit(bytes(PUBKEY))
+        self.assertEqual((data, sw), (bytes(PUBKEY_RESP), 0x9000))
+        self.assertEqual(applet.conn.log[-1], [0x80, 0x02, 0x00, 0x00, 0x21])
+        data, sw = applet.transmit(bytes(SIGN))
+        self.assertEqual((data, sw), (bytes(SIG_RESP), 0x9000))
+        self.assertEqual(applet.conn.log[-2:], [SIGN, [0x00, 0xC0, 0x00, 0x00, 0x41]])
+
+    def test_non_9000_never_raises(self):
+        self.use(omnikey())
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        data, sw = applet.transmit(bytes([0x80, 0x7F, 0x00, 0x00, 0x00]))
+        self.assertEqual((data, sw), (b"", 0x6D00))
+
+    def test_ladder_tries_t1_after_t0_fails(self):
+        card = FakeCard()
+        rdr = FakeReader(
+            "weird",
+            card,
+            connect_errors={None: ("unresponsive", 0x80100066), T0: ("mismatch", 0x8010000F)},
+            default_protocol=T1,
+        )
+        self.use(rdr)
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(applet.protocol, "T1")
+        self.assertEqual(rdr.connect_calls, [None, T0, T1])
+
+    def test_select_61xx_counts_as_present(self):
+        class Card61(FakeCard):
+            """SELECT answers 61 00 with the FCI pending (seen on some T=0 stacks)."""
+
+            def answer(self, apdu, protocol):
+                if apdu[:4] == [0x00, 0xA4, 0x04, 0x00]:
+                    return [], 0x61, 0x00
+                return super().answer(apdu, protocol)
+
+        self.use(FakeReader("x", Card61()))
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(applet.protocol, "default")
+
+    def test_no_reader(self):
+        self.use()
+        with self.assertRaises(nuri_pcsc.CardError) as ctx:
+            nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(ctx.exception.code, "NO_READER")
+
+    def test_no_card_in_any_reader(self):
+        self.use(omnikey(card=None), realtek(card=None))
+        with self.assertRaises(nuri_pcsc.CardError) as ctx:
+            nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(ctx.exception.code, "NO_CARD")
+
+    def test_card_without_applet(self):
+        self.use(realtek(card=FakeCard(aids=(FIDO_AID,))))
+        with self.assertRaises(nuri_pcsc.CardError) as ctx:
+            nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(ctx.exception.code, "NO_APPLET")
+
+    def test_no_applet_outranks_no_card_across_readers(self):
+        self.use(omnikey(card=None), realtek(card=FakeCard(aids=(FIDO_AID,))))
+        with self.assertRaises(nuri_pcsc.CardError) as ctx:
+            nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(ctx.exception.code, "NO_APPLET")
+
+    def test_transport_when_every_protocol_fails(self):
+        rdr = FakeReader(
+            "dead",
+            FakeCard(),
+            connect_errors={None: ("x", 0x80100066), T0: ("x", 0x8010000F), T1: ("x", 0x8010000F)},
+        )
+        self.use(rdr)
+        with self.assertRaises(nuri_pcsc.CardError) as ctx:
+            nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(ctx.exception.code, "TRANSPORT")
+
+    def test_skips_empty_reader_and_uses_next(self):
+        empty, real = self.use(omnikey(card=None, name="HID OMNIKEY 5422CL"), realtek())
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(applet.reader_name, str(real))
+        self.assertEqual(applet.protocol, "T0")
+
+    def test_reader_argument_and_env_filter(self):
+        omni, rt = self.use(omnikey(), realtek())
+        self.assertEqual(nuri_pcsc.open_applet(ETH_AID, reader="Generic").reader_name, str(rt))
+        os.environ["NURI_READER"] = "OMNIKEY"
+        self.assertEqual(nuri_pcsc.open_applet(ETH_AID).reader_name, str(omni))
+        self.assertEqual(nuri_pcsc.reader_names(), [str(omni)])
+        os.environ["NURI_READER"] = "nonexistent"
+        with self.assertRaises(nuri_pcsc.CardError) as ctx:
+            nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(ctx.exception.code, "NO_READER")
+
+    def test_env_pins_protocol(self):
+        (rdr,) = self.use(omnikey())
+        os.environ["NURI_PCSC_PROTOCOL"] = "T0"
+        applet = nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(applet.protocol, "T0")
+        self.assertEqual(rdr.connect_calls, [T0])
+        os.environ["NURI_PCSC_PROTOCOL"] = "T1"
+        (rt,) = self.use(realtek())
+        with self.assertRaises(nuri_pcsc.CardError) as ctx:
+            nuri_pcsc.open_applet(ETH_AID)
+        self.assertEqual(ctx.exception.code, "TRANSPORT")
+        self.assertEqual(rt.connect_calls, [T1])
+        os.environ["NURI_PCSC_PROTOCOL"] = "bogus"
+        with self.assertRaises(ValueError):
+            nuri_pcsc.open_applet(ETH_AID)
+
+    def test_context_manager_closes(self):
+        (rdr,) = self.use(omnikey())
+        with nuri_pcsc.open_applet(ETH_AID) as applet:
+            self.assertEqual(applet.atr(), b"\x3b\x11\x95\x80")
+        self.assertEqual(rdr.disconnects, 1)
+
+    def test_bad_aid_rejected(self):
+        with self.assertRaises(ValueError):
+            nuri_pcsc.select_apdu("00")
+
+
+class TransmitRawTests(unittest.TestCase):
+    def test_6cxx_on_case4_keeps_data(self):
+        class Conn:
+            def __init__(self):
+                self.log = []
+
+            def transmit(self, apdu, protocol=None):
+                self.log.append(list(apdu))
+                if len(self.log) == 1:
+                    return [], 0x6C, 0x05
+                return [1, 2, 3, 4, 5], 0x90, 0x00
+
+        conn = Conn()
+        apdu = bytes([0x80, 0x10, 0x00, 0x00, 0x02, 0xAA, 0xBB, 0x00])
+        data, sw = nuri_pcsc.transmit_raw(conn, apdu)
+        self.assertEqual((data, sw), (bytes([1, 2, 3, 4, 5]), 0x9000))
+        self.assertEqual(conn.log[1], [0x80, 0x10, 0x00, 0x00, 0x02, 0xAA, 0xBB, 0x05])
+
+    def test_61xx_chain_concatenates(self):
+        class Conn:
+            def __init__(self):
+                self.calls = 0
+
+            def transmit(self, apdu, protocol=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return [], 0x61, 0x02
+                if self.calls == 2:
+                    return [0xA, 0xB], 0x61, 0x01
+                return [0xC], 0x90, 0x00
+
+        data, sw = nuri_pcsc.transmit_raw(Conn(), bytes([0x80, 0x04, 0x00, 0x00, 0x00]))
+        self.assertEqual((data, sw), (bytes([0xA, 0xB, 0xC]), 0x9000))
+
+
+class PatchFido2Tests(PcscTestCase):
+    """Inject a fake fido2.pcsc module shaped like python-fido2 2.x and check the patch."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved = {k: sys.modules.get(k) for k in ("fido2", "fido2.pcsc")}
+        fido2 = types.ModuleType("fido2")
+        pcsc = types.ModuleType("fido2.pcsc")
+
+        class CtapPcscDevice:
+            selected = []
+
+            def __init__(self, connection, name):
+                self._conn = connection
+                self._name = name
+                self.connect()
+
+            def connect(self):
+                self._conn.connect()
+                self._select()
+
+            def _select(self):
+                _, sw1, sw2 = self._conn.transmit(list(bytes.fromhex("00A4040008" + FIDO_AID)))
+                if (sw1, sw2) != (0x90, 0x00):
+                    raise ValueError("FIDO applet selection failure.")
+                CtapPcscDevice.selected.append(self._name)
+
+            @classmethod
+            def list_devices(cls, name=""):
+                for reader in nuri_pcsc._list_readers():
+                    if name in str(reader):
+                        try:
+                            yield cls(reader.createConnection(), str(reader))
+                        except Exception:
+                            pass
+
+        pcsc.CtapPcscDevice = CtapPcscDevice
+        fido2.pcsc = pcsc
+        sys.modules["fido2"] = fido2
+        sys.modules["fido2.pcsc"] = pcsc
+        self.cls = CtapPcscDevice
+
+    def tearDown(self):
+        for key, mod in self._saved.items():
+            if mod is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = mod
+        super().tearDown()
+
+    def test_unpatched_list_devices_misses_realtek(self):
+        self.use(realtek())
+        self.assertEqual(list(self.cls.list_devices()), [])
+
+    def test_patched_list_devices_finds_realtek_on_t0(self):
+        (rdr,) = self.use(realtek())
+        nuri_pcsc.patch_fido2()
+        devices = list(self.cls.list_devices())
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0].nuri_protocol, "T0")
+        self.assertEqual(rdr.connect_calls, [None, T0])
+        self.assertIn(str(rdr), self.cls.selected)
+
+    def test_patched_still_works_on_omnikey_and_is_idempotent(self):
+        (rdr,) = self.use(omnikey())
+        nuri_pcsc.patch_fido2()
+        first = self.cls.connect
+        nuri_pcsc.patch_fido2()
+        self.assertIs(self.cls.connect, first)
+        devices = list(self.cls.list_devices())
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0].nuri_protocol, "default")
+        self.assertEqual(rdr.connect_calls, [None])
+
+    def test_patched_skips_card_without_fido_applet(self):
+        self.use(realtek(card=FakeCard(aids=(ETH_AID,))))
+        nuri_pcsc.patch_fido2()
+        self.assertEqual(list(self.cls.list_devices()), [])
+
+
+class ScriptImportTests(unittest.TestCase):
+    """Every script touched by the reader-compat change still compiles."""
+
+    def test_py_compile_all_scripts(self):
+        import py_compile
+
+        for path in sorted(SCRIPTS.glob("*.py")):
+            py_compile.compile(str(path), doraise=True)
+
+    def test_module_imports_without_pyscard(self):
+        spec = importlib.util.spec_from_file_location("nuri_pcsc_fresh", SCRIPTS / "nuri_pcsc.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertTrue(callable(module.open_applet))
+
+
+if __name__ == "__main__":
+    unittest.main()
