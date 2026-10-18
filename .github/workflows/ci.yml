@@ -34,6 +34,7 @@ jobs:
       - run: npm ci
       - run: npm run card:release:verify
       - run: python3 -m py_compile scripts/*.py
+      - run: python3 -m unittest discover -s test -p test_nuri_pcsc.py -v
 
   virtual-card:
     runs-on: ubuntu-latest

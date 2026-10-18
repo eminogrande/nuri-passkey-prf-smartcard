@@ -26,13 +26,17 @@ Host-side crypto uses PROVEN LIBRARIES, not hand-rolled code:
 
 The card is the only signer. The host only hashes + verifies.
 
-Reader: forces T=0 (OMNIKEY 5422 + this card fails T=1 with 0x80100016).
+Reader: scripts/nuri_pcsc.py picks the reader and protocol (default, then T=0,
+then T=1; env NURI_READER / NURI_PCSC_PROTOCOL) and handles 61XX/6CXX.
 """
 import json
 import hashlib
+import os
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from smartcard.System import readers
-from smartcard.CardConnection import CardConnection
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nuri_pcsc
 
 from ecdsa import VerifyingKey, SECP256k1
 from ecdsa.util import sigdecode_string
@@ -106,33 +110,26 @@ def ecdsa_ecrecover(pub33: bytes, sig_rs: bytes, msg_hash: bytes) -> bool:
 
 # --- card communication ------------------------------------------------------
 
-_conn = None
+_applet = None
 
 def get_connection():
-    global _conn
-    if _conn is not None:
+    """Cached nuri_pcsc.Applet (ETH applet selected); reconnects if the card went away."""
+    global _applet
+    if _applet is not None:
         try:
-            _conn.transmit(list(bytes([0x00, 0xA4, 0x04, 0x00, len(AID_ETH)]) + AID_ETH))
-            return _conn
+            _applet.transmit(bytes([0x00, 0xA4, 0x04, 0x00, len(AID_ETH)]) + AID_ETH)
+            return _applet
         except Exception:
-            try: _conn.disconnect()
-            except: pass
-            _conn = None
-    rs = readers()
-    for r in rs:
-        try:
-            c = r.createConnection()
-            c.connect(CardConnection.T0_protocol)
-            _conn = c
-            return _conn
-        except Exception:
-            continue
-    raise RuntimeError("no card found in any reader")
+            _applet.close()
+            _applet = None
+    try:
+        _applet = nuri_pcsc.open_applet(AID_ETH.hex())
+    except nuri_pcsc.CardError as e:
+        raise RuntimeError(f"no card found in any reader ({e})") from e
+    return _applet
 
 def transmit(apdu):
-    conn = get_connection()
-    data, sw1, sw2 = conn.transmit(list(apdu))
-    return bytes(data), (sw1 << 8) | sw2
+    return get_connection().transmit(bytes(apdu))
 
 def select_aid(aid):
     return transmit(bytes([0x00, 0xA4, 0x04, 0x00, len(aid)]) + aid)
@@ -287,12 +284,11 @@ class Handler(BaseHTTPRequestHandler):
             json_resp(self, 500, {"error": str(e)})
 
     def card_status(self):
-        rs = readers()
-        reader_names = [str(r) for r in rs]
+        reader_names = nuri_pcsc.reader_names()
         atr = None
         try:
-            conn = get_connection()
-            atr = "".join("%02x" % b for b in conn.getATR())
+            applet = get_connection()
+            atr = applet.atr().hex()
         except Exception as e:
             atr = f"error: {e}"
         applets = {}
@@ -320,7 +316,7 @@ def main():
     port = 8788
     print(f"Nuri card dashboard: http://127.0.0.1:{port}/")
     print("Card signs, python-ecdsa + pycryptodome verify (no hand-rolled host crypto).")
-    print("Reader must have the card inserted (T=0 forced).")
+    print("Reader must have the card inserted (protocol ladder: default, T=0, T=1; see docs/reader-compatibility.md).")
     HTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 if __name__ == "__main__":

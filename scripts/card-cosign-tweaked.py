@@ -16,8 +16,11 @@ import argparse
 import hashlib
 import json
 import secrets
+import os
 import sys
-from smartcard.System import readers
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nuri_pcsc  # shared PC/SC: reader + protocol ladder, 61XX/6CXX
 
 P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
 N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
@@ -142,21 +145,16 @@ def arkade_script_root_tweak(internal_xonly, script_root32):
 
 class Card:
     def connect(self):
-        sel = [0x00, 0xA4, 0x04, 0x00, len(APPLET_AID)] + list(APPLET_AID)
-        for i, r in enumerate(readers()):
-            try:
-                c = r.createConnection(); c.connect()
-                _, s1, s2 = c.transmit(sel)
-                if (s1 << 8 | s2) == 0x9000:
-                    self.conn, self.reader = c, f"{i}:{r}"; return
-                c.disconnect()
-            except Exception: pass
-        raise RuntimeError("No NuriMuSig2 card found")
+        try:
+            self.applet = nuri_pcsc.open_applet(APPLET_AID.hex())
+        except nuri_pcsc.CardError as e:
+            raise RuntimeError(f"No NuriMuSig2 card found ({e})") from e
+        self.conn, self.reader = self.applet.conn, f"{self.applet.reader_name} [{self.applet.protocol}]"
 
     def _tx(self, apdu):
-        resp, s1, s2 = self.conn.transmit(apdu)
-        if (s1 << 8 | s2) != 0x9000: raise RuntimeError(f"APDU SW={s1:02X}{s2:02X}")
-        return bytes(resp)
+        resp, sw = self.applet.transmit(bytes(apdu))
+        if sw != 0x9000: raise RuntimeError(f"APDU SW={sw:04X}")
+        return resp
 
     def version(self):
         r = self._tx([0x00, 0x01, 0x00, 0x00, 0x00]); return f"{r[0]}.{r[1]}"

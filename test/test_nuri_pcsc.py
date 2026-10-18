@@ -61,11 +61,12 @@ class FakeCard:
         if apdu[:4] == [0x00, 0xA4, 0x04, 0x00]:
             aid = bytes(apdu[5:5 + apdu[4]]).hex().upper()
             return ([], 0x90, 0x00) if aid in self.aids else ([], 0x6A, 0x82)
-        if apdu[:4] == [0x80, 0x01, 0x00, 0x00]:
+        # The ETH applet ignores CLA (scripts send 00, the dashboard/brief send 80).
+        if apdu[1:4] == [0x01, 0x00, 0x00]:
             return self._case2(apdu, VERSION_RESP, protocol)
-        if apdu[:4] == [0x80, 0x02, 0x00, 0x00]:
+        if apdu[1:4] == [0x02, 0x00, 0x00]:
             return self._case2(apdu, PUBKEY_RESP, protocol)
-        if apdu[:5] == [0x80, 0x04, 0x00, 0x00, 0x20]:
+        if apdu[1:5] == [0x04, 0x00, 0x00, 0x20]:
             if protocol == T0:
                 return [], 0x61, 0x41
             return SIG_RESP, 0x90, 0x00
@@ -433,6 +434,100 @@ class PatchFido2Tests(PcscTestCase):
         self.use(realtek(card=FakeCard(aids=(ETH_AID,))))
         nuri_pcsc.patch_fido2()
         self.assertEqual(list(self.cls.list_devices()), [])
+
+
+def load_script(name):
+    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), SCRIPTS / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+MUSIG2_AID = "4E5552494D554701"
+TOTP_AID = "4E555249544F5450"
+
+
+class MuSig2Card(FakeCard):
+    """MuSig2 applet: 00 01 version, 00 03 pubkey (T=0: 6CXX first)."""
+
+    def answer(self, apdu, protocol):
+        if apdu[:4] == [0x00, 0x01, 0x00, 0x00]:
+            return self._case2(apdu, [1, 11, 0] + list(b"MUS1"), protocol)
+        if apdu[:4] == [0x00, 0x03, 0x00, 0x00]:
+            return self._case2(apdu, PUBKEY_RESP, protocol)
+        return super().answer(apdu, protocol)
+
+
+class CallSiteTests(PcscTestCase):
+    """The switched scripts work end-to-end against the fake T=0-only reader."""
+
+    def test_card_cosign_tweaked_card_class_on_realtek(self):
+        (rdr,) = self.use(realtek(card=MuSig2Card(aids=(MUSIG2_AID,))))
+        core = load_script("card-cosign-tweaked")
+        card = core.Card()
+        card.connect()
+        self.assertEqual(card.applet.protocol, "T0")
+        self.assertIn("[T0]", card.reader)
+        self.assertEqual(card.version(), "1.11")
+        self.assertEqual(card.pubkey(), bytes(PUBKEY_RESP))
+        self.assertEqual(card.applet.conn.log[-1], [0x00, 0x03, 0x00, 0x00, 0x21])  # 6C21 resend
+        card.close()
+        self.assertEqual(rdr.disconnects, 1)
+
+    def test_card_cosign_tweaked_reports_missing_card(self):
+        self.use(omnikey(card=None))
+        core = load_script("card-cosign-tweaked")
+        with self.assertRaises(RuntimeError) as ctx:
+            core.Card().connect()
+        self.assertIn("NO_CARD", str(ctx.exception))
+
+    def test_real_card_cosign_proof_card_on_realtek(self):
+        self.use(realtek(card=MuSig2Card(aids=(MUSIG2_AID,))))
+        proof = load_script("real-card-cosign-proof")
+        card = proof.NuriMuSig2Card()
+        card.connect()
+        self.assertEqual(card.version(), {"version": "1.11", "build": "MUS1"})
+        self.assertEqual(card.pubkey(), bytes(PUBKEY_RESP))
+        card.disconnect()
+
+    def test_pkcs11_helper_card_init_on_realtek(self):
+        self.use(realtek())
+        helper = load_script("pkcs11-helper")
+        conn = helper.card_init()
+        self.assertEqual(conn.protocol, "T0")
+        self.assertEqual(helper.card_pubkey(conn), bytes(PUBKEY_RESP).hex())
+        sig_hex, v = helper.card_sign(conn, "11" * 32)
+        self.assertEqual(sig_hex, bytes(SIG_RESP[:64]).hex())
+        self.assertEqual(v, SIG_RESP[64])
+        self.assertEqual(conn.conn.log[-1], [0x00, 0xC0, 0x00, 0x00, 0x41])  # 61 41 GET RESPONSE
+        conn.close()
+
+    def test_card_totp_connect_on_realtek_and_errors(self):
+        self.use(realtek(card=FakeCard(aids=(TOTP_AID,))))
+        totp = load_script("card-totp")
+        conn = totp.connect()
+        self.assertEqual(conn.protocol, "T0")
+        data, sw1, sw2 = totp.transmit(conn, [0x00, 0xA4, 0x04, 0x00, len(totp.AID), *totp.AID])
+        self.assertEqual((data, sw1, sw2), ([], 0x90, 0x00))
+        self.use(realtek(card=FakeCard(aids=(ETH_AID,))))
+        with self.assertRaises(SystemExit) as ctx:
+            totp.connect()
+        self.assertIn("NO_APPLET", str(ctx.exception))
+        self.use()
+        with self.assertRaises(SystemExit) as ctx:
+            totp.connect()
+        self.assertIn("no PC/SC reader", str(ctx.exception))
+
+    def test_card_eth_test_helpers_on_realtek(self):
+        self.use(realtek())
+        eth = load_script("card-eth-test")
+        applet = nuri_pcsc.open_applet(eth.APPLET_AID.hex())
+        self.assertEqual(eth.get_version(applet), bytes(VERSION_RESP))
+        self.assertEqual(eth.get_pubkey(applet), bytes(PUBKEY_RESP))
+        self.assertEqual(eth.sign(applet, bytes([0x11] * 32)), bytes(SIG_RESP))
+        self.assertEqual(eth.raw_sw(applet, bytes([0x80, 0x7F, 0x00, 0x00, 0x00])), (b"", 0x6D00))
+        with self.assertRaises(RuntimeError):
+            eth.transmit(applet, bytes([0x80, 0x7F, 0x00, 0x00, 0x00]))
 
 
 class ScriptImportTests(unittest.TestCase):

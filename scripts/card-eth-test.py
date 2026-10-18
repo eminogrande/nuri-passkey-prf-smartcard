@@ -10,19 +10,20 @@ Flow:
 """
 import argparse
 import hashlib
-from smartcard.System import readers
-from smartcard.CardConnection import CardConnection
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nuri_pcsc
 
 APPLET_AID = bytes.fromhex("4E55524945544801")
 MUSIG2_AID = bytes.fromhex("4E5552494D53554701")
 
 def transmit(conn, apdu_bytes):
-    res = conn.transmit(list(apdu_bytes))
-    data, sw1, sw2 = res
-    sw = (sw1 << 8) | sw2
+    data, sw = conn.transmit(bytes(apdu_bytes))
     if sw != 0x9000:
-        raise RuntimeError(f"APDU failed: SW={sw:04X}, data={bytes(data).hex()}")
-    return bytes(data)
+        raise RuntimeError(f"APDU failed: SW={sw:04X}, data={data.hex()}")
+    return data
 
 def select(conn):
     return select_aid(conn, APPLET_AID)
@@ -35,8 +36,7 @@ def get_version(conn):
     return transmit(conn, bytes([0x00, 0x01, 0x00, 0x00, 0x00]))
 
 def raw_sw(conn, apdu_bytes):
-    data, sw1, sw2 = conn.transmit(list(apdu_bytes))
-    return bytes(data), (sw1 << 8) | sw2
+    return conn.transmit(bytes(apdu_bytes))
 
 def musig2_rng_health_check(conn):
     """Coldcard Mk3 lesson: TRNG code present in the binary does not prove the
@@ -83,29 +83,12 @@ def main():
     )
     args = parser.parse_args()
 
-    rs = readers()
-    conn = None
-    # Find the reader whose inserted card actually exposes the ETH applet.
-    for i, r in enumerate(rs):
-        candidate = None
-        try:
-            candidate = r.createConnection()
-            # ponytail: OMNIKEY 5422 contact slot fails T=1 transmits; card speaks T=0
-            candidate.connect(CardConnection.T0_protocol)
-            select(candidate)
-            conn = candidate
-            print(f"Reader {i}: {r}")
-            break
-        except Exception:
-            try:
-                if candidate is not None:
-                    candidate.disconnect()
-            except Exception:
-                pass
-            continue
-
-    if conn is None:
-        raise SystemExit("Nuri ETH applet not found on any reader")
+    # Find the reader (and protocol) whose inserted card actually exposes the ETH applet.
+    try:
+        conn = nuri_pcsc.open_applet(APPLET_AID.hex())
+    except nuri_pcsc.CardError as error:
+        raise SystemExit(f"Nuri ETH applet not found on any reader ({error})") from error
+    print(f"Reader: {conn.reader_name} (protocol {conn.protocol})")
 
     print("\n=== SELECT NURIETH1 ===")
     print("OK")
@@ -255,7 +238,7 @@ def main():
     print("\n=== MUSIG2 RNG HEALTH CHECK ===")
     musig2_rng_health_check(conn)
 
-    conn.disconnect()
+    conn.close()
     print("\n=== DONE ===")
 
 if __name__ == "__main__":

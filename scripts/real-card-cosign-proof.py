@@ -11,8 +11,11 @@ import argparse
 import hashlib
 import json
 import secrets
+import os
 import sys
-from smartcard.System import readers
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nuri_pcsc  # shared PC/SC: reader + protocol ladder, 61XX/6CXX
 
 
 P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
@@ -174,31 +177,22 @@ class NuriMuSig2Card:
         self.reader = None
 
     def connect(self):
-        select = [0x00, 0xA4, 0x04, 0x00, len(APPLET_AID)] + list(APPLET_AID)
-        for idx, reader in enumerate(readers()):
-            try:
-                conn = reader.createConnection()
-                conn.connect()
-                _, sw1, sw2 = conn.transmit(select)
-                if ((sw1 << 8) | sw2) == 0x9000:
-                    self.conn = conn
-                    self.reader = f"{idx}:{reader}"
-                    return
-                conn.disconnect()
-            except Exception:
-                pass
-        raise RuntimeError("No NuriMuSig2 card found")
+        try:
+            self.applet = nuri_pcsc.open_applet(APPLET_AID.hex())
+        except nuri_pcsc.CardError as error:
+            raise RuntimeError(f"No NuriMuSig2 card found ({error})") from error
+        self.conn = self.applet.conn
+        self.reader = f"{self.applet.reader_name} [{self.applet.protocol}]"
 
     def disconnect(self):
         if self.conn:
-            self.conn.disconnect()
+            self.applet.close()
 
     def transmit_ok(self, apdu):
-        response, sw1, sw2 = self.conn.transmit(apdu)
-        status = (sw1 << 8) | sw2
+        response, status = self.applet.transmit(bytes(apdu))
         if status != 0x9000:
             raise RuntimeError(f"APDU failed: SW={status:04X}")
-        return bytes(response)
+        return response
 
     def version(self):
         response = self.transmit_ok([0x00, 0x01, 0x00, 0x00, 0x00])

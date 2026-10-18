@@ -15,6 +15,8 @@ import os
 import sys
 import json
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 # --- Software simulation (no card needed) ---
 SIM_KEY = None
 SIM_PUBKEY = None
@@ -50,22 +52,10 @@ def sim_pubkey():
     return (prefix + x.to_bytes(32, 'big')).hex()
 
 # --- Real card (PC/SC) ---
-def card_select(conn, aid_hex):
-    aid = bytes.fromhex(aid_hex)
-    apdu = [0x00, 0xA4, 0x04, 0x00, len(aid)] + list(aid)
-    data, sw1, sw2 = conn.transmit(apdu)
-    sw = (sw1 << 8) | sw2
-    if sw != 0x9000:
-        raise RuntimeError(f"SELECT {aid_hex} failed: SW={sw:04X}")
-    return True
-
+# conn is a nuri_pcsc.Applet: reader/protocol ladder + 6CXX/61XX handled there.
 def card_tx(conn, apdu):
-    data, sw1, sw2 = conn.transmit(apdu)
-    if sw1 == 0x6C:  # wrong Le: resend with the length the card asked for
-        data, sw1, sw2 = conn.transmit(apdu[:4] + [sw2])
-    if sw1 == 0x61:  # T=0: response waiting, fetch with GET RESPONSE
-        data, sw1, sw2 = conn.transmit([0x00, 0xC0, 0x00, 0x00, sw2])
-    return data, sw1, sw2
+    data, sw = conn.transmit(bytes(apdu))
+    return list(data), sw >> 8, sw & 0xFF
 
 def card_sign(conn, hash_hex):
     h = bytes.fromhex(hash_hex)
@@ -85,21 +75,11 @@ def card_pubkey(conn):
     return bytes(data).hex()
 
 def card_init():
-    from smartcard.System import readers
-    from smartcard.CardConnection import CardConnection
-    rs = readers()
-    for r in rs:
-        try:
-            c = r.createConnection()
-            c.connect(protocol=CardConnection.T0_protocol)
-            card_select(c, '4E55524945544801')
-            return c
-        except:
-            try:
-                c.disconnect()
-            except:
-                pass
-    raise RuntimeError("No card with ETH applet found")
+    import nuri_pcsc
+    try:
+        return nuri_pcsc.open_applet('4E55524945544801')
+    except nuri_pcsc.CardError as e:
+        raise RuntimeError(f"No card with ETH applet found ({e})") from e
 
 # --- Main ---
 def main():
@@ -160,10 +140,7 @@ def main():
             print(f'error={str(e).replace(chr(10), " ")}')
 
     if conn:
-        try:
-            conn.disconnect()
-        except:
-            pass
+        conn.close()
 
 if __name__ == '__main__':
     main()

@@ -15,8 +15,11 @@ import base64
 import hmac
 import hashlib
 import struct
+import os
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 AID = bytes.fromhex("4E555249544F5450")  # "NURITOTP"
 INS_PUT = 0x01
@@ -43,26 +46,19 @@ def selfcheck() -> None:
 
 
 def connect():
-    from smartcard.System import readers  # lazy import so --selfcheck needs no reader
-    rs = readers()
-    if not rs:
-        sys.exit("no PC/SC reader")
-    # Pick whichever reader has a card that answers our AID (contact vs contactless varies).
-    for r in rs:
-        try:
-            conn = r.createConnection()
-            conn.connect()
-        except Exception:
-            continue
-        _, sw1, sw2 = transmit(conn, [0x00, 0xA4, 0x04, 0x00, len(AID), *AID])
-        if (sw1, sw2) == (0x90, 0x00):
-            return conn
-    sys.exit("TOTP applet not found on any reader (SELECT failed)")
+    import nuri_pcsc  # lazy import so --selfcheck needs no reader
+    # Pick whichever reader/protocol has a card that answers our AID (contact vs contactless varies).
+    try:
+        return nuri_pcsc.open_applet(AID.hex())
+    except nuri_pcsc.CardError as error:
+        if error.code == "NO_READER":
+            sys.exit(f"no PC/SC reader ({error})")
+        sys.exit(f"TOTP applet not found on any reader (SELECT failed: {error})")
 
 
 def transmit(conn, apdu):
-    data, sw1, sw2 = conn.transmit(apdu)
-    return data, sw1, sw2
+    data, sw = conn.transmit(bytes(apdu))
+    return list(data), sw >> 8, sw & 0xFF
 
 
 def main() -> None:

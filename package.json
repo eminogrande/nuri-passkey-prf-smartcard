@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
+    "test:pcsc": "scripts/run-card-python.sh -m unittest discover -s test -p test_nuri_pcsc.py -v",
     "musig2:demo": "node src/musig2/card-sim-cli.js",
     "server:cosigner:software": "node scripts/server-cosigner-smoke.mjs --backend=software",
     "server:cosigner:card-sim": "node scripts/server-cosigner-smoke.mjs --backend=card-sim",

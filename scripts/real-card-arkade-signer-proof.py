@@ -29,15 +29,7 @@ CORE_SPEC.loader.exec_module(core)
 
 
 class ProofCard(core.Card):
-    def _tx(self, apdu):
-        response, sw1, sw2 = self.conn.transmit(apdu)
-        if sw1 == 0x6C:
-            retry = list(apdu)
-            retry[-1] = sw2
-            response, sw1, sw2 = self.conn.transmit(retry)
-        if (sw1 << 8 | sw2) != 0x9000:
-            raise RuntimeError(f"APDU SW={sw1:02X}{sw2:02X}")
-        return bytes(response)
+    """core.Card already goes through nuri_pcsc (T=0 ladder, 6CXX resend, 61XX GET RESPONSE)."""
 
 
 def bytes_from_hex32(value: str, name: str) -> bytes:

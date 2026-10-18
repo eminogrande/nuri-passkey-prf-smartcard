@@ -9,6 +9,9 @@ from fido2.ctap import CtapError
 from fido2.ctap2 import Ctap2
 from fido2.pcsc import CtapPcscDevice
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nuri_pcsc
+
 SSH_SK_USER_PRESENCE_REQD = 0x01
 SSH_SK_USER_VERIFICATION_REQD = 0x04
 SSH_SK_RESIDENT_KEY = 0x20
@@ -25,18 +28,10 @@ def fail(code, message):
     return 1
 
 
-def _connect_with_t0_fallback(self):
-    # Some readers (e.g. Realtek 0bda:0165) leave this card "unresponsive" under
-    # auto protocol; T=0 works. Try the default first, then force T=0.
-    from smartcard.CardConnection import CardConnection
-    try:
-        self._conn.connect()
-    except Exception:
-        self._conn.connect(CardConnection.T0_protocol)
-    self._select()
-
-
-CtapPcscDevice.connect = _connect_with_t0_fallback
+# Some readers (e.g. Realtek 0bda:0165) leave this card "unresponsive" under
+# auto protocol; T=0 works. nuri_pcsc installs the default -> T=0 -> T=1 ladder
+# into CtapPcscDevice.connect so list_devices() finds the card there too.
+nuri_pcsc.patch_fido2()
 
 
 def device():
